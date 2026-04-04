@@ -5,6 +5,7 @@
 mod tests {
     use super::super::*;
     use chrono::Utc;
+    use sha2::Digest;
     use tempfile::TempDir;
 
     // -- parse_args tests --
@@ -695,6 +696,7 @@ mod tests {
             files: files.into_iter().map(String::from).collect(),
             dependencies: vec![],
             transaction_id: None,
+            held: false,
         }
     }
 
@@ -1453,6 +1455,7 @@ mod tests {
             files: vec!["/usr/sbin/nginx".into()],
             dependencies: vec!["libc".into()],
             transaction_id: Some("txn-000001".into()),
+            held: false,
         };
         let json = serde_json::to_string(&entry).unwrap();
         let back: PackageDbEntry = serde_json::from_str(&json).unwrap();
@@ -1478,6 +1481,7 @@ mod tests {
             files: vec!["/usr/bin/curl".into()],
             dependencies: vec![],
             transaction_id: None,
+            held: false,
         });
         let json = serde_json::to_string(&db).unwrap();
         let back: PackageDb = serde_json::from_str(&json).unwrap();
@@ -1505,5 +1509,295 @@ mod tests {
         let json = serde_json::to_string(&log).unwrap();
         let back: TransactionLog = serde_json::from_str(&json).unwrap();
         assert_eq!(back.len(), 1);
+    }
+
+    // -- PackageDb persistence tests --
+
+    #[test]
+    fn package_db_save_and_load() {
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("packages.json");
+        let mut db = PackageDb::load(&db_path).unwrap();
+        assert_eq!(db.count(), 0);
+
+        db.register(make_db_entry("nginx", "1.24", vec!["/usr/sbin/nginx"]));
+        db.register(make_db_entry("curl", "8.0", vec!["/usr/bin/curl"]));
+        db.save().unwrap();
+
+        let loaded = PackageDb::load(&db_path).unwrap();
+        assert_eq!(loaded.count(), 2);
+        assert!(loaded.is_installed("nginx"));
+        assert!(loaded.is_installed("curl"));
+    }
+
+    #[test]
+    fn package_db_save_atomic_creates_dirs() {
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("nested/dir/packages.json");
+        let mut db = PackageDb::load(&db_path).unwrap();
+        db.register(make_db_entry("pkg", "1.0", vec![]));
+        db.save().unwrap();
+        assert!(db_path.exists());
+    }
+
+    #[test]
+    fn package_db_fresh_load_nonexistent() {
+        let tmp = TempDir::new().unwrap();
+        let db = PackageDb::load(&tmp.path().join("nope.json")).unwrap();
+        assert_eq!(db.count(), 0);
+    }
+
+    // -- ArkConfig new fields --
+
+    #[test]
+    fn ark_config_default_has_db_and_log_paths() {
+        let config = ArkConfig::default();
+        assert_eq!(
+            config.package_db_path,
+            std::path::PathBuf::from("/var/lib/agnos/ark/packages.json")
+        );
+        assert_eq!(
+            config.transaction_log_path,
+            std::path::PathBuf::from("/var/lib/agnos/ark/transaction.log")
+        );
+    }
+
+    // -- Package hold/unhold tests --
+
+    #[test]
+    fn package_db_hold_and_unhold() {
+        let mut db = PackageDb::new();
+        db.register(make_db_entry("nginx", "1.24", vec![]));
+        assert!(!db.get("nginx").unwrap().held);
+
+        assert!(db.hold("nginx"));
+        assert!(db.get("nginx").unwrap().held);
+
+        assert!(db.unhold("nginx"));
+        assert!(!db.get("nginx").unwrap().held);
+    }
+
+    #[test]
+    fn package_db_hold_nonexistent() {
+        let mut db = PackageDb::new();
+        assert!(!db.hold("nonexistent"));
+    }
+
+    #[test]
+    fn package_db_held_packages() {
+        let mut db = PackageDb::new();
+        db.register(make_db_entry("a", "1.0", vec![]));
+        db.register(make_db_entry("b", "1.0", vec![]));
+        db.register(make_db_entry("c", "1.0", vec![]));
+        db.hold("a");
+        db.hold("c");
+        let held = db.held_packages();
+        assert_eq!(held.len(), 2);
+    }
+
+    #[test]
+    fn parse_hold_command() {
+        let cmd = parse_args(&["hold", "nginx", "curl"]).unwrap();
+        assert_eq!(
+            cmd,
+            ArkCommand::Hold {
+                packages: vec!["nginx".into(), "curl".into()],
+            }
+        );
+    }
+
+    #[test]
+    fn parse_unhold_command() {
+        let cmd = parse_args(&["unhold", "nginx"]).unwrap();
+        assert_eq!(
+            cmd,
+            ArkCommand::Unhold {
+                packages: vec!["nginx".into()],
+            }
+        );
+    }
+
+    #[test]
+    fn parse_hold_empty_fails() {
+        assert!(parse_args(&["hold"]).is_err());
+    }
+
+    #[test]
+    fn serde_roundtrip_hold_command() {
+        let cmd = ArkCommand::Hold {
+            packages: vec!["nginx".into()],
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let back: ArkCommand = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, cmd);
+    }
+
+    // -- Color output tests --
+
+    #[test]
+    fn color_output_contains_ansi() {
+        let mut output = ArkOutput::new();
+        output.lines.push(ArkOutputLine::Success("ok".into()));
+        let colored = output.to_colored_string();
+        assert!(colored.contains('\x1b'));
+        let plain = output.to_display_string();
+        assert!(!plain.contains('\x1b'));
+    }
+
+    #[test]
+    fn render_respects_flag() {
+        let mut output = ArkOutput::new();
+        output.lines.push(ArkOutputLine::Header("test".into()));
+        assert!(output.render(true).contains('\x1b'));
+        assert!(!output.render(false).contains('\x1b'));
+    }
+
+    // -- Verify command tests --
+
+    #[test]
+    fn parse_verify_all() {
+        let cmd = parse_args(&["verify"]).unwrap();
+        assert_eq!(cmd, ArkCommand::Verify { package: None });
+    }
+
+    #[test]
+    fn parse_verify_single() {
+        let cmd = parse_args(&["verify", "nginx"]).unwrap();
+        assert_eq!(
+            cmd,
+            ArkCommand::Verify {
+                package: Some("nginx".into()),
+            }
+        );
+    }
+
+    #[test]
+    fn serde_roundtrip_verify_command() {
+        let cmd = ArkCommand::Verify {
+            package: Some("nginx".into()),
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let back: ArkCommand = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, cmd);
+    }
+
+    #[test]
+    fn integrity_full_check_missing_file() {
+        let mut db = PackageDb::new();
+        db.register(PackageDbEntry {
+            name: "broken".into(),
+            version: "1.0".into(),
+            source: PackageSource::System,
+            installed_at: Utc::now(),
+            installed_by: "root".into(),
+            size_bytes: 100,
+            checksum: "abc".into(),
+            files: vec!["/nonexistent/file/that/does/not/exist".into()],
+            dependencies: vec![],
+            transaction_id: None,
+            held: false,
+        });
+        let issues = db.check_integrity_full(None);
+        assert_eq!(issues.len(), 1);
+        assert!(matches!(
+            issues[0].issue_type,
+            IntegrityIssueType::MissingFile(_)
+        ));
+    }
+
+    #[test]
+    fn integrity_full_check_valid_file() {
+        let tmp = TempDir::new().unwrap();
+        let file_path = tmp.path().join("test.txt");
+        std::fs::write(&file_path, b"hello").unwrap();
+        let hash = format!("{:x}", sha2::Sha256::digest(b"hello"));
+
+        let mut db = PackageDb::new();
+        db.register(PackageDbEntry {
+            name: "good-pkg".into(),
+            version: "1.0".into(),
+            source: PackageSource::System,
+            installed_at: Utc::now(),
+            installed_by: "root".into(),
+            size_bytes: 5,
+            checksum: hash,
+            files: vec![file_path.to_string_lossy().into_owned()],
+            dependencies: vec![],
+            transaction_id: None,
+            held: false,
+        });
+        let issues = db.check_integrity_full(Some("good-pkg"));
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn integrity_full_check_checksum_mismatch() {
+        let tmp = TempDir::new().unwrap();
+        let file_path = tmp.path().join("tampered.txt");
+        std::fs::write(&file_path, b"tampered content").unwrap();
+
+        let mut db = PackageDb::new();
+        db.register(PackageDbEntry {
+            name: "tampered-pkg".into(),
+            version: "1.0".into(),
+            source: PackageSource::System,
+            installed_at: Utc::now(),
+            installed_by: "root".into(),
+            size_bytes: 16,
+            checksum: "wrong_checksum".into(),
+            files: vec![file_path.to_string_lossy().into_owned()],
+            dependencies: vec![],
+            transaction_id: None,
+            held: false,
+        });
+        let issues = db.check_integrity_full(Some("tampered-pkg"));
+        assert_eq!(issues.len(), 1);
+        assert!(matches!(
+            issues[0].issue_type,
+            IntegrityIssueType::ChecksumMismatch(_)
+        ));
+    }
+
+    // -- History command tests --
+
+    #[test]
+    fn parse_history_default() {
+        let cmd = parse_args(&["history"]).unwrap();
+        assert_eq!(cmd, ArkCommand::History { count: None });
+    }
+
+    #[test]
+    fn parse_history_with_count() {
+        let cmd = parse_args(&["history", "5"]).unwrap();
+        assert_eq!(cmd, ArkCommand::History { count: Some(5) });
+    }
+
+    #[test]
+    fn serde_roundtrip_history_command() {
+        let cmd = ArkCommand::History { count: Some(20) };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let back: ArkCommand = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, cmd);
+    }
+
+    // -- Held field serde backward compat --
+
+    #[test]
+    fn package_db_entry_held_defaults_false() {
+        // Simulate deserializing old data without "held" field
+        let json = r#"{
+            "name": "old-pkg",
+            "version": "1.0",
+            "source": "System",
+            "installed_at": "2026-01-01T00:00:00Z",
+            "installed_by": "root",
+            "size_bytes": 100,
+            "checksum": "abc",
+            "files": [],
+            "dependencies": [],
+            "transaction_id": null
+        }"#;
+        let entry: PackageDbEntry = serde_json::from_str(json).unwrap();
+        assert!(!entry.held);
     }
 }

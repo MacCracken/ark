@@ -106,6 +106,7 @@ fn bench_package_db(c: &mut Criterion) {
                 vec![]
             },
             transaction_id: Some(format!("txn-{:06}", i)),
+            held: false,
         });
     }
 

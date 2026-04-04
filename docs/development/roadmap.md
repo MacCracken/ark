@@ -19,6 +19,19 @@
 - [x] Full documentation suite (README, CHANGELOG, CONTRIBUTING, SECURITY, CODE_OF_CONDUCT, architecture, roadmap)
 - [x] P(-1) scaffold hardening pass
 
+### Work Loop 1 (2026-04-04)
+
+- [x] Binary entrypoint (main.rs) with clap
+- [x] TOML configuration file support (feature-gated)
+- [x] PackageDb persistence to disk (JSON, atomic write)
+- [x] Package hold/unhold (prevent upgrades)
+- [x] ANSI color output via anstyle
+- [x] File-level integrity checking (SHA-256 hash verification)
+- [x] `ark history` command (view transaction log)
+- [x] Interactive confirmation prompts
+- [x] `--no-color` CLI flag
+- [x] 114 tests, 0 failures
+
 ## Backlog
 
 ### Package Management
@@ -28,19 +41,12 @@
 - [ ] Package pinning and version locking
 - [ ] Dependency conflict resolution UI
 - [ ] Rollback execution (undo a committed transaction)
-- [ ] Package hold/unhold (prevent upgrades)
 
 ### CLI
-- [ ] Binary entrypoint (main.rs) with clap
-- [ ] Interactive confirmation prompts
 - [ ] Progress bar / spinner during operations
-- [ ] Color output (ANSI formatting)
 - [ ] Shell completions (bash, zsh, fish)
-- [ ] `ark history` command (view transaction log)
 
 ### Database & Persistence
-- [ ] PackageDb persistence to disk
-- [ ] File-level integrity checking (hash each file on disk)
 - [ ] Database migration framework
 - [ ] Backup and restore
 
@@ -58,7 +64,6 @@
 
 ## Future
 
-- Configuration file support (ark.toml)
 - Plugin system for custom sources
 - Remote management API
 - Metrics and telemetry (opt-in)

@@ -11,15 +11,25 @@ readme = "README.md"
 keywords = ["package", "manager", "install", "cli"]
 categories = ["os", "command-line-utilities"]
 exclude = [".claude/", ".github/", "docs/", "scripts/"]
+default-run = "ark"
+
+[features]
+default = ["cli", "config"]
+cli = ["dep:clap", "dep:tracing-subscriber"]
+config = ["dep:toml"]
 
 [dependencies]
+anstyle = "1"
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"], optional = true }
 nous = { path = "../nous", version = "0.1.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+toml = { version = "0.8", optional = true }
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 uuid = { version = "1", features = ["v4", "serde"] }
 
 [dev-dependencies]

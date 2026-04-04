@@ -15,16 +15,21 @@
 
 pub mod types;
 
+#[cfg(feature = "config")]
+pub mod config;
+
+pub mod confirm;
+
 #[cfg(test)]
 mod tests;
 
 // Re-export all public types so external consumers see the same flat API
 // as they did when this was a single ark.rs file.
 pub use types::{
-    ArkCommand, ArkConfig, ArkOutput, ArkOutputLine, ArkResult, DEFAULT_TRANSACTION_LOG_PATH,
-    InstallPlan, InstallStep, IntegrityIssue, IntegrityIssueType, PackageDb, PackageDbEntry,
-    PlanExecutionResult, StepResult, Transaction, TransactionId, TransactionLog, TransactionOp,
-    TransactionOpStatus, TransactionOpType, TransactionStatus,
+    ArkCommand, ArkConfig, ArkOutput, ArkOutputLine, ArkResult, DEFAULT_PACKAGE_DB_PATH,
+    DEFAULT_TRANSACTION_LOG_PATH, InstallPlan, InstallStep, IntegrityIssue, IntegrityIssueType,
+    PackageDb, PackageDbEntry, PlanExecutionResult, StepResult, Transaction, TransactionId,
+    TransactionLog, TransactionOp, TransactionOpStatus, TransactionOpType, TransactionStatus,
 };
 
 use anyhow::{Context, Result, bail};
@@ -43,18 +48,35 @@ pub const ARK_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub struct ArkPackageManager {
     pub(crate) config: ArkConfig,
     resolver: NousResolver,
+    package_db: PackageDb,
+    transaction_log: TransactionLog,
 }
 
 impl ArkPackageManager {
     /// Create a new package manager with the given configuration.
+    /// Loads PackageDb and TransactionLog from config paths (or creates empty if missing).
     pub fn new(config: ArkConfig) -> Result<Self> {
         let resolver = NousResolver::new(&config.marketplace_dir, &config.cache_dir)
             .with_strategy(config.default_strategy.clone());
-        Ok(Self { config, resolver })
+        let package_db = PackageDb::load(&config.package_db_path).unwrap_or_else(|e| {
+            warn!(error = %e, "Failed to load package database, starting fresh");
+            PackageDb::new()
+        });
+        let transaction_log =
+            TransactionLog::load(&config.transaction_log_path).unwrap_or_else(|e| {
+                warn!(error = %e, "Failed to load transaction log, starting fresh");
+                TransactionLog::new()
+            });
+        Ok(Self {
+            config,
+            resolver,
+            package_db,
+            transaction_log,
+        })
     }
 
     /// Main dispatch — execute an `ArkCommand` and return its result.
-    pub fn execute(&self, command: &ArkCommand) -> Result<ArkResult> {
+    pub fn execute(&mut self, command: &ArkCommand) -> Result<ArkResult> {
         match command {
             ArkCommand::Install { packages, force } => self.install(packages, *force),
             ArkCommand::GroupInstall { group, force } => {
@@ -107,6 +129,26 @@ impl ArkPackageManager {
             ArkCommand::Upgrade { packages } => self.upgrade(packages.as_deref()),
             ArkCommand::Status => {
                 let output = self.status();
+                Ok(ArkResult {
+                    success: true,
+                    message: output.to_display_string(),
+                    packages_affected: Vec::new(),
+                    source: PackageSource::Unknown,
+                })
+            }
+            ArkCommand::Hold { packages } => self.hold(packages),
+            ArkCommand::Unhold { packages } => self.unhold(packages),
+            ArkCommand::Verify { package } => {
+                let output = self.verify(package.as_deref());
+                Ok(ArkResult {
+                    success: true,
+                    message: output.to_display_string(),
+                    packages_affected: Vec::new(),
+                    source: PackageSource::Unknown,
+                })
+            }
+            ArkCommand::History { count } => {
+                let output = self.history(*count);
                 Ok(ArkResult {
                     success: true,
                     message: output.to_display_string(),
@@ -434,7 +476,7 @@ impl ArkPackageManager {
                         version: Some(update.available_version.clone()),
                     });
                 }
-                PackageSource::Unknown => {
+                PackageSource::Unknown | _ => {
                     warn!(package = %update.name, "Cannot upgrade package with unknown source");
                 }
             }
@@ -513,6 +555,122 @@ impl ArkPackageManager {
         output
     }
 
+    /// Hold packages to prevent upgrades.
+    pub fn hold(&mut self, packages: &[String]) -> Result<ArkResult> {
+        let mut affected = Vec::new();
+        for name in packages {
+            if self.package_db.hold(name) {
+                affected.push(name.clone());
+            } else {
+                warn!(package = %name, "Package not found in database, cannot hold");
+            }
+        }
+        self.package_db.save()?;
+        Ok(ArkResult {
+            success: true,
+            message: format!("{} package(s) held", affected.len()),
+            packages_affected: affected,
+            source: PackageSource::Unknown,
+        })
+    }
+
+    /// Remove hold on packages to allow upgrades.
+    pub fn unhold(&mut self, packages: &[String]) -> Result<ArkResult> {
+        let mut affected = Vec::new();
+        for name in packages {
+            if self.package_db.unhold(name) {
+                affected.push(name.clone());
+            } else {
+                warn!(package = %name, "Package not found in database, cannot unhold");
+            }
+        }
+        self.package_db.save()?;
+        Ok(ArkResult {
+            success: true,
+            message: format!("{} package(s) unheld", affected.len()),
+            packages_affected: affected,
+            source: PackageSource::Unknown,
+        })
+    }
+
+    /// Verify integrity of installed packages.
+    #[must_use]
+    pub fn verify(&self, package: Option<&str>) -> ArkOutput {
+        let issues = self.package_db.check_integrity_full(package);
+        let mut output = ArkOutput::new();
+        let header = if let Some(name) = package {
+            format!("Integrity check: {}", name)
+        } else {
+            "Integrity check: all packages".to_string()
+        };
+        output.lines.push(ArkOutputLine::Header(header));
+
+        if issues.is_empty() {
+            output.lines.push(ArkOutputLine::Success(
+                "No integrity issues found".to_string(),
+            ));
+        } else {
+            for issue in &issues {
+                let desc = match &issue.issue_type {
+                    IntegrityIssueType::NoFileManifest => "no file manifest".to_string(),
+                    IntegrityIssueType::MissingFile(f) => format!("missing file: {}", f),
+                    IntegrityIssueType::ChecksumMismatch(f) => {
+                        format!("checksum mismatch: {}", f)
+                    }
+                };
+                output.lines.push(ArkOutputLine::Warning(format!(
+                    "{}: {}",
+                    issue.package, desc
+                )));
+            }
+        }
+
+        output.lines.push(ArkOutputLine::Separator);
+        output.lines.push(ArkOutputLine::Info {
+            key: "Issues found".to_string(),
+            value: format!("{}", issues.len()),
+        });
+        output
+    }
+
+    /// Show transaction history.
+    #[must_use]
+    pub fn history(&self, count: Option<usize>) -> ArkOutput {
+        let n = count.unwrap_or(10);
+        let recent = self.transaction_log.recent(n);
+        let mut output = ArkOutput::new();
+        output.lines.push(ArkOutputLine::Header(format!(
+            "Transaction history (last {})",
+            n
+        )));
+
+        if recent.is_empty() {
+            output.lines.push(ArkOutputLine::Warning(
+                "No transactions recorded".to_string(),
+            ));
+        } else {
+            for txn in &recent {
+                output.lines.push(ArkOutputLine::Info {
+                    key: txn.id.clone(),
+                    value: format!(
+                        "{} | {} | {} ops | {}",
+                        txn.status,
+                        txn.user,
+                        txn.operations.len(),
+                        txn.started_at.format("%Y-%m-%d %H:%M:%S UTC"),
+                    ),
+                });
+            }
+        }
+
+        output.lines.push(ArkOutputLine::Separator);
+        output.lines.push(ArkOutputLine::Info {
+            key: "Total transactions".to_string(),
+            value: format!("{}", self.transaction_log.len()),
+        });
+        output
+    }
+
     /// Create an install plan without executing anything.
     pub fn plan_install(&self, packages: &[String]) -> Result<InstallPlan> {
         let mut plan = InstallPlan::new();
@@ -570,7 +728,7 @@ impl ArkPackageManager {
                                 },
                             });
                         }
-                        PackageSource::Unknown => {
+                        PackageSource::Unknown | _ => {
                             warn!(package = %pkg_name, "Could not determine source");
                             bail!("Cannot determine source for package: {}", pkg_name);
                         }
@@ -627,7 +785,7 @@ impl ArkPackageManager {
                             plan.steps
                                 .push(InstallStep::MarketplaceRemove { package: pkg.name });
                         }
-                        PackageSource::Unknown => {
+                        PackageSource::Unknown | _ => {
                             bail!("Cannot determine source for package: {}", pkg_name);
                         }
                     },
@@ -849,8 +1007,45 @@ pub fn parse_args(args: &[&str]) -> Result<ArkCommand> {
 
         "status" => Ok(ArkCommand::Status),
 
+        "hold" => {
+            let packages: Vec<String> = rest
+                .iter()
+                .filter(|a| !a.starts_with('-'))
+                .map(|a| a.to_string())
+                .collect();
+            if packages.is_empty() {
+                bail!("hold requires at least one package name");
+            }
+            Ok(ArkCommand::Hold { packages })
+        }
+
+        "unhold" => {
+            let packages: Vec<String> = rest
+                .iter()
+                .filter(|a| !a.starts_with('-'))
+                .map(|a| a.to_string())
+                .collect();
+            if packages.is_empty() {
+                bail!("unhold requires at least one package name");
+            }
+            Ok(ArkCommand::Unhold { packages })
+        }
+
+        "verify" => {
+            let package = rest
+                .first()
+                .filter(|a| !a.starts_with('-'))
+                .map(|a| a.to_string());
+            Ok(ArkCommand::Verify { package })
+        }
+
+        "history" => {
+            let count = rest.first().and_then(|a| a.parse::<usize>().ok());
+            Ok(ArkCommand::History { count })
+        }
+
         _ => bail!(
-            "Unknown command: {}. Available: install, remove, search, list, info, update, upgrade, status",
+            "Unknown command: {}. Available: install, remove, search, list, info, update, upgrade, status, hold, unhold, verify, history",
             command
         ),
     }

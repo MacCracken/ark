@@ -2,11 +2,12 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tracing::{debug, info, warn};
 
 use nous::PackageSource;
@@ -40,6 +41,14 @@ pub enum ArkCommand {
     Upgrade { packages: Option<Vec<String>> },
     /// Show ark version and status.
     Status,
+    /// Hold packages to prevent upgrades.
+    Hold { packages: Vec<String> },
+    /// Remove hold on packages, allowing upgrades again.
+    Unhold { packages: Vec<String> },
+    /// Verify integrity of installed packages.
+    Verify { package: Option<String> },
+    /// Show transaction history.
+    History { count: Option<usize> },
 }
 
 // ---------------------------------------------------------------------------
@@ -128,6 +137,65 @@ impl ArkOutput {
         }
         out
     }
+
+    /// Format the output with ANSI color codes.
+    #[must_use]
+    pub fn to_colored_string(&self) -> String {
+        use anstyle::{AnsiColor, Style};
+
+        let bold = Style::new().bold();
+        let green = Style::new().fg_color(Some(AnsiColor::Green.into()));
+        let red = Style::new().fg_color(Some(AnsiColor::Red.into()));
+        let yellow = Style::new().fg_color(Some(AnsiColor::Yellow.into()));
+        let cyan = Style::new().fg_color(Some(AnsiColor::Cyan.into()));
+        let reset = anstyle::Reset;
+
+        let mut out = String::new();
+        for line in &self.lines {
+            match line {
+                ArkOutputLine::Header(s) => {
+                    out.push_str(&format!("{bold}=== {} ==={reset}\n", s));
+                }
+                ArkOutputLine::Package {
+                    name,
+                    version,
+                    source,
+                    description,
+                } => {
+                    out.push_str(&format!(
+                        "  {cyan}{}{reset} ({}) [{}] -- {}\n",
+                        name, version, source, description
+                    ));
+                }
+                ArkOutputLine::Info { key, value } => {
+                    out.push_str(&format!("  {bold}{}{reset}: {}\n", key, value));
+                }
+                ArkOutputLine::Separator => {
+                    out.push_str("---\n");
+                }
+                ArkOutputLine::Success(s) => {
+                    out.push_str(&format!("{green}OK: {}{reset}\n", s));
+                }
+                ArkOutputLine::Error(s) => {
+                    out.push_str(&format!("{red}ERROR: {}{reset}\n", s));
+                }
+                ArkOutputLine::Warning(s) => {
+                    out.push_str(&format!("{yellow}WARN: {}{reset}\n", s));
+                }
+            }
+        }
+        out
+    }
+
+    /// Render output as plain or colored string based on flag.
+    #[must_use]
+    pub fn render(&self, color: bool) -> String {
+        if color {
+            self.to_colored_string()
+        } else {
+            self.to_display_string()
+        }
+    }
 }
 
 impl Default for ArkOutput {
@@ -206,7 +274,7 @@ pub enum InstallStep {
 // ---------------------------------------------------------------------------
 
 /// Configuration for ark behavior.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArkConfig {
     /// Default resolution strategy when source is ambiguous.
     pub default_strategy: nous::ResolutionStrategy,
@@ -222,6 +290,10 @@ pub struct ArkConfig {
     pub marketplace_dir: PathBuf,
     /// Cache directory for ark metadata.
     pub cache_dir: PathBuf,
+    /// Path to the package database file.
+    pub package_db_path: PathBuf,
+    /// Path to the transaction log file.
+    pub transaction_log_path: PathBuf,
 }
 
 impl Default for ArkConfig {
@@ -234,6 +306,8 @@ impl Default for ArkConfig {
             color_output: true,
             marketplace_dir: PathBuf::from("/var/lib/agnos/marketplace"),
             cache_dir: PathBuf::from("/var/cache/agnos/ark"),
+            package_db_path: PathBuf::from(DEFAULT_PACKAGE_DB_PATH),
+            transaction_log_path: PathBuf::from(DEFAULT_TRANSACTION_LOG_PATH),
         }
     }
 }
@@ -310,6 +384,9 @@ pub enum TransactionOpStatus {
 
 /// Default path for the persistent transaction log.
 pub const DEFAULT_TRANSACTION_LOG_PATH: &str = "/var/lib/agnos/ark/transaction.log";
+
+/// Default path for the package database.
+pub const DEFAULT_PACKAGE_DB_PATH: &str = "/var/lib/agnos/ark/packages.json";
 
 /// The transaction log stores all past transactions for auditing and rollback.
 /// When a log_path is set, state-changing operations persist to an append-only
@@ -558,6 +635,9 @@ pub struct PackageDbEntry {
     pub dependencies: Vec<String>,
     /// Transaction that installed this package.
     pub transaction_id: Option<TransactionId>,
+    /// Whether this package is held (upgrades prevented).
+    #[serde(default)]
+    pub held: bool,
 }
 
 /// The unified package database. Tracks every package installed via ark,
@@ -565,12 +645,69 @@ pub struct PackageDbEntry {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PackageDb {
     pub(crate) packages: HashMap<String, PackageDbEntry>,
+    #[serde(skip)]
+    pub(crate) db_path: Option<PathBuf>,
 }
 
 impl PackageDb {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Load a package database from a JSON file on disk.
+    /// Creates an empty database if the file does not exist.
+    pub fn load(path: &Path) -> Result<Self> {
+        let mut db = if path.exists() {
+            let contents = std::fs::read_to_string(path)
+                .with_context(|| format!("Failed to read package database {}", path.display()))?;
+            let mut db: PackageDb = serde_json::from_str(&contents)
+                .with_context(|| format!("Failed to parse package database {}", path.display()))?;
+            info!(packages = db.packages.len(), path = %path.display(), "Loaded package database");
+            db.db_path = Some(path.to_path_buf());
+            db
+        } else {
+            debug!(path = %path.display(), "No existing package database -- starting fresh");
+            Self {
+                packages: HashMap::new(),
+                db_path: Some(path.to_path_buf()),
+            }
+        };
+        db.db_path = Some(path.to_path_buf());
+        Ok(db)
+    }
+
+    /// Save the package database to disk using atomic write (temp + rename).
+    pub fn save(&self) -> Result<()> {
+        let Some(ref path) = self.db_path else {
+            return Ok(());
+        };
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "Failed to create package database directory {}",
+                    parent.display()
+                )
+            })?;
+        }
+        let json =
+            serde_json::to_string_pretty(self).context("Failed to serialize package database")?;
+        let tmp_path = path.with_extension("json.tmp");
+        std::fs::write(&tmp_path, json.as_bytes()).with_context(|| {
+            format!(
+                "Failed to write temp package database {}",
+                tmp_path.display()
+            )
+        })?;
+        std::fs::rename(&tmp_path, path).with_context(|| {
+            format!(
+                "Failed to rename temp package database {} -> {}",
+                tmp_path.display(),
+                path.display()
+            )
+        })?;
+        debug!(packages = self.packages.len(), path = %path.display(), "Package database saved");
+        Ok(())
     }
 
     /// Register a newly installed package.
@@ -643,7 +780,7 @@ impl PackageDb {
         self.packages.values().map(|e| e.size_bytes).sum()
     }
 
-    /// Check for packages whose files are missing (integrity check).
+    /// Quick check for packages whose file manifest is empty (no disk I/O).
     #[must_use]
     pub fn check_integrity(&self) -> Vec<IntegrityIssue> {
         let mut issues = Vec::new();
@@ -656,6 +793,88 @@ impl PackageDb {
             }
         }
         issues
+    }
+
+    /// Full integrity check: verify files exist on disk and checksums match.
+    /// Optionally check a single package by name.
+    pub fn check_integrity_full(&self, package: Option<&str>) -> Vec<IntegrityIssue> {
+        let mut issues = Vec::new();
+        let entries: Vec<&PackageDbEntry> = if let Some(name) = package {
+            self.packages.get(name).into_iter().collect()
+        } else {
+            self.packages.values().collect()
+        };
+
+        for entry in entries {
+            if entry.files.is_empty() {
+                issues.push(IntegrityIssue {
+                    package: entry.name.clone(),
+                    issue_type: IntegrityIssueType::NoFileManifest,
+                });
+                continue;
+            }
+            for file_path in &entry.files {
+                let path = Path::new(file_path);
+                if !path.exists() {
+                    issues.push(IntegrityIssue {
+                        package: entry.name.clone(),
+                        issue_type: IntegrityIssueType::MissingFile(file_path.clone()),
+                    });
+                    continue;
+                }
+                if !entry.checksum.is_empty() {
+                    match std::fs::read(path) {
+                        Ok(contents) => {
+                            let hash = format!("{:x}", Sha256::digest(&contents));
+                            if hash != entry.checksum {
+                                issues.push(IntegrityIssue {
+                                    package: entry.name.clone(),
+                                    issue_type: IntegrityIssueType::ChecksumMismatch(
+                                        file_path.clone(),
+                                    ),
+                                });
+                            }
+                        }
+                        Err(e) => {
+                            warn!(file = file_path, error = %e, "Failed to read file for integrity check");
+                            issues.push(IntegrityIssue {
+                                package: entry.name.clone(),
+                                issue_type: IntegrityIssueType::MissingFile(file_path.clone()),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        issues
+    }
+
+    /// Hold a package to prevent upgrades. Returns true if the package was found.
+    pub fn hold(&mut self, name: &str) -> bool {
+        if let Some(entry) = self.packages.get_mut(name) {
+            entry.held = true;
+            info!(package = name, "package held");
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Remove hold on a package. Returns true if the package was found.
+    pub fn unhold(&mut self, name: &str) -> bool {
+        if let Some(entry) = self.packages.get_mut(name) {
+            entry.held = false;
+            info!(package = name, "package unheld");
+            true
+        } else {
+            false
+        }
+    }
+
+    /// List all held packages.
+    #[must_use]
+    pub fn held_packages(&self) -> Vec<&PackageDbEntry> {
+        self.packages.values().filter(|e| e.held).collect()
     }
 
     /// Get all files owned by a package.
