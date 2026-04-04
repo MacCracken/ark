@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
@@ -17,6 +17,7 @@ use nous::PackageSource;
 
 /// An ark command parsed from CLI args.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ArkCommand {
     /// Install one or more packages.
     Install { packages: Vec<String>, force: bool },
@@ -62,6 +63,7 @@ pub struct ArkOutput {
 
 /// A single line of formatted ark output.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ArkOutputLine {
     Header(String),
     Package {
@@ -82,11 +84,13 @@ pub enum ArkOutputLine {
 
 impl ArkOutput {
     /// Create an empty output.
+    #[must_use]
     pub fn new() -> Self {
         Self { lines: Vec::new() }
     }
 
     /// Format the output as a human-readable string.
+    #[must_use]
     pub fn to_display_string(&self) -> String {
         let mut out = String::new();
         for line in &self.lines {
@@ -151,6 +155,7 @@ pub struct InstallPlan {
 }
 
 impl InstallPlan {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             steps: Vec::new(),
@@ -168,6 +173,7 @@ impl Default for InstallPlan {
 
 /// A single step in an install plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum InstallStep {
     SystemInstall {
         package: String,
@@ -252,6 +258,7 @@ pub struct Transaction {
 
 /// Status of a transaction.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum TransactionStatus {
     InProgress,
     Committed,
@@ -283,6 +290,7 @@ pub struct TransactionOp {
 
 /// Types of transaction operations.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum TransactionOpType {
     Install,
     Remove,
@@ -291,6 +299,7 @@ pub enum TransactionOpType {
 
 /// Status of a transaction operation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum TransactionOpStatus {
     Pending,
     InProgress,
@@ -314,6 +323,7 @@ pub struct TransactionLog {
 }
 
 impl TransactionLog {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -336,12 +346,11 @@ impl TransactionLog {
                 }
                 match serde_json::from_str::<Transaction>(trimmed) {
                     Ok(txn) => {
-                        if let Some(num_str) = txn.id.strip_prefix("txn-") {
-                            if let Ok(num) = num_str.parse::<u64>() {
-                                if num >= log.next_id {
-                                    log.next_id = num;
-                                }
-                            }
+                        if let Some(num_str) = txn.id.strip_prefix("txn-")
+                            && let Ok(num) = num_str.parse::<u64>()
+                            && num >= log.next_id
+                        {
+                            log.next_id = num;
                         }
                         if let Some(pos) = log.transactions.iter().position(|t| t.id == txn.id) {
                             log.transactions[pos] = txn;
@@ -363,19 +372,35 @@ impl TransactionLog {
 
     /// Persist a single transaction to the append-only log file.
     pub(crate) fn persist(&self, txn: &Transaction) {
-        if let Some(ref path) = self.log_path {
-            if let Some(parent) = path.parent() {
-                let _ = std::fs::create_dir_all(parent);
+        let Some(ref path) = self.log_path else {
+            return;
+        };
+        if let Some(parent) = path.parent()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            warn!(error = %e, path = %parent.display(), "Failed to create transaction log directory");
+            return;
+        }
+        let json_line = match serde_json::to_string(txn) {
+            Ok(s) => s,
+            Err(e) => {
+                warn!(error = %e, txn_id = %txn.id, "Failed to serialize transaction");
+                return;
             }
-            if let Ok(json_line) = serde_json::to_string(txn) {
-                use std::io::Write;
-                if let Ok(mut f) = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(path)
-                {
-                    let _ = writeln!(f, "{}", json_line);
+        };
+        use std::io::Write;
+        match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
+            Ok(mut f) => {
+                if let Err(e) = writeln!(f, "{}", json_line) {
+                    warn!(error = %e, txn_id = %txn.id, "Failed to write transaction to log");
                 }
+            }
+            Err(e) => {
+                warn!(error = %e, path = %path.display(), "Failed to open transaction log");
             }
         }
     }
@@ -399,34 +424,34 @@ impl TransactionLog {
 
     /// Add an operation to a transaction.
     pub fn add_op(&mut self, txn_id: &str, op: TransactionOp) -> bool {
-        if let Some(txn) = self.transactions.iter_mut().find(|t| t.id == txn_id) {
-            if txn.status == TransactionStatus::InProgress {
-                txn.operations.push(op);
-                return true;
-            }
+        if let Some(txn) = self.transactions.iter_mut().find(|t| t.id == txn_id)
+            && txn.status == TransactionStatus::InProgress
+        {
+            txn.operations.push(op);
+            return true;
         }
         false
     }
 
     /// Mark a transaction operation as complete.
     pub fn mark_op_complete(&mut self, txn_id: &str, package: &str) -> bool {
-        if let Some(txn) = self.transactions.iter_mut().find(|t| t.id == txn_id) {
-            if let Some(op) = txn.operations.iter_mut().find(|o| o.package == package) {
-                op.status = TransactionOpStatus::Complete;
-                return true;
-            }
+        if let Some(txn) = self.transactions.iter_mut().find(|t| t.id == txn_id)
+            && let Some(op) = txn.operations.iter_mut().find(|o| o.package == package)
+        {
+            op.status = TransactionOpStatus::Complete;
+            return true;
         }
         false
     }
 
     /// Mark a transaction operation as failed.
     pub fn mark_op_failed(&mut self, txn_id: &str, package: &str, error: &str) -> bool {
-        if let Some(txn) = self.transactions.iter_mut().find(|t| t.id == txn_id) {
-            if let Some(op) = txn.operations.iter_mut().find(|o| o.package == package) {
-                op.status = TransactionOpStatus::Failed;
-                op.error = Some(error.to_string());
-                return true;
-            }
+        if let Some(txn) = self.transactions.iter_mut().find(|t| t.id == txn_id)
+            && let Some(op) = txn.operations.iter_mut().find(|o| o.package == package)
+        {
+            op.status = TransactionOpStatus::Failed;
+            op.error = Some(error.to_string());
+            return true;
         }
         false
     }
@@ -489,21 +514,25 @@ impl TransactionLog {
     }
 
     /// Get a transaction by ID.
+    #[must_use]
     pub fn get(&self, txn_id: &str) -> Option<&Transaction> {
         self.transactions.iter().find(|t| t.id == txn_id)
     }
 
     /// Get the N most recent transactions.
+    #[must_use]
     pub fn recent(&self, count: usize) -> Vec<&Transaction> {
         self.transactions.iter().rev().take(count).collect()
     }
 
     /// Total number of transactions.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.transactions.len()
     }
 
     /// Whether the log is empty.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.transactions.is_empty()
     }
@@ -539,6 +568,7 @@ pub struct PackageDb {
 }
 
 impl PackageDb {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -565,21 +595,25 @@ impl PackageDb {
     }
 
     /// Look up a package by name.
+    #[must_use]
     pub fn get(&self, name: &str) -> Option<&PackageDbEntry> {
         self.packages.get(name)
     }
 
     /// Check if a package is installed.
+    #[must_use]
     pub fn is_installed(&self, name: &str) -> bool {
         self.packages.contains_key(name)
     }
 
     /// List all installed packages.
+    #[must_use]
     pub fn list(&self) -> Vec<&PackageDbEntry> {
         self.packages.values().collect()
     }
 
     /// List packages matching a query (name or description substring).
+    #[must_use]
     pub fn search(&self, query: &str) -> Vec<&PackageDbEntry> {
         let q = query.to_lowercase();
         self.packages
@@ -589,6 +623,7 @@ impl PackageDb {
     }
 
     /// List packages from a specific source.
+    #[must_use]
     pub fn by_source(&self, source: &PackageSource) -> Vec<&PackageDbEntry> {
         self.packages
             .values()
@@ -597,16 +632,19 @@ impl PackageDb {
     }
 
     /// Total number of installed packages.
+    #[must_use]
     pub fn count(&self) -> usize {
         self.packages.len()
     }
 
     /// Total disk usage across all installed packages.
+    #[must_use]
     pub fn total_size(&self) -> u64 {
         self.packages.values().map(|e| e.size_bytes).sum()
     }
 
     /// Check for packages whose files are missing (integrity check).
+    #[must_use]
     pub fn check_integrity(&self) -> Vec<IntegrityIssue> {
         let mut issues = Vec::new();
         for entry in self.packages.values() {
@@ -621,6 +659,7 @@ impl PackageDb {
     }
 
     /// Get all files owned by a package.
+    #[must_use]
     pub fn files_for(&self, name: &str) -> Vec<&str> {
         self.packages
             .get(name)
@@ -629,6 +668,7 @@ impl PackageDb {
     }
 
     /// Find which package owns a given file path.
+    #[must_use]
     pub fn owner_of(&self, file_path: &str) -> Option<&str> {
         self.packages
             .values()
@@ -693,6 +733,7 @@ pub struct IntegrityIssue {
 
 /// Types of integrity issues.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum IntegrityIssueType {
     /// Package has no file manifest — cannot verify or clean-remove.
     NoFileManifest,

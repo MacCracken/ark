@@ -4,6 +4,7 @@
 #[allow(clippy::module_inception)]
 mod tests {
     use super::super::*;
+    use chrono::Utc;
     use tempfile::TempDir;
 
     // -- parse_args tests --
@@ -687,7 +688,7 @@ mod tests {
             name: name.into(),
             version: version.into(),
             source: PackageSource::System,
-            installed_at: chrono::Utc::now(),
+            installed_at: Utc::now(),
             installed_by: "root".into(),
             size_bytes: 1024,
             checksum: "abc123".into(),
@@ -1309,5 +1310,200 @@ mod tests {
             recovered.get("txn-000001").unwrap().status,
             TransactionStatus::Committed
         );
+    }
+
+    // -- serde roundtrip tests for remaining types --
+
+    #[test]
+    fn serde_roundtrip_ark_config() {
+        let config = ArkConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        let back: ArkConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.confirm_system_installs, config.confirm_system_installs);
+        assert_eq!(back.confirm_removals, config.confirm_removals);
+        assert_eq!(back.auto_update_check, config.auto_update_check);
+        assert_eq!(back.color_output, config.color_output);
+        assert_eq!(back.marketplace_dir, config.marketplace_dir);
+        assert_eq!(back.cache_dir, config.cache_dir);
+    }
+
+    #[test]
+    fn serde_roundtrip_ark_output() {
+        let mut output = ArkOutput::new();
+        output.lines.push(ArkOutputLine::Header("Test".to_string()));
+        output.lines.push(ArkOutputLine::Package {
+            name: "pkg".into(),
+            version: "1.0".into(),
+            source: PackageSource::System,
+            description: "desc".into(),
+        });
+        output.lines.push(ArkOutputLine::Info {
+            key: "k".into(),
+            value: "v".into(),
+        });
+        output.lines.push(ArkOutputLine::Separator);
+        output.lines.push(ArkOutputLine::Success("ok".into()));
+        output.lines.push(ArkOutputLine::Error("fail".into()));
+        output.lines.push(ArkOutputLine::Warning("warn".into()));
+
+        let json = serde_json::to_string(&output).unwrap();
+        let back: ArkOutput = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.lines.len(), output.lines.len());
+    }
+
+    #[test]
+    fn serde_roundtrip_transaction() {
+        let txn = Transaction {
+            id: "txn-000001".into(),
+            started_at: Utc::now(),
+            completed_at: Some(Utc::now()),
+            status: TransactionStatus::Committed,
+            operations: vec![TransactionOp {
+                op_type: TransactionOpType::Install,
+                package: "pkg".into(),
+                version: Some("1.0".into()),
+                source: PackageSource::Marketplace,
+                status: TransactionOpStatus::Complete,
+                error: None,
+            }],
+            user: "root".into(),
+        };
+        let json = serde_json::to_string(&txn).unwrap();
+        let back: Transaction = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.id, txn.id);
+        assert_eq!(back.status, txn.status);
+        assert_eq!(back.operations.len(), 1);
+        assert_eq!(back.user, txn.user);
+    }
+
+    #[test]
+    fn serde_roundtrip_transaction_op() {
+        let op = TransactionOp {
+            op_type: TransactionOpType::Upgrade {
+                from_version: "0.9".into(),
+            },
+            package: "nginx".into(),
+            version: Some("1.0".into()),
+            source: PackageSource::System,
+            status: TransactionOpStatus::Failed,
+            error: Some("disk full".into()),
+        };
+        let json = serde_json::to_string(&op).unwrap();
+        let back: TransactionOp = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.package, op.package);
+        assert_eq!(back.op_type, op.op_type);
+        assert_eq!(back.status, op.status);
+        assert_eq!(back.error, op.error);
+    }
+
+    #[test]
+    fn serde_roundtrip_transaction_status_all_variants() {
+        for status in [
+            TransactionStatus::InProgress,
+            TransactionStatus::Committed,
+            TransactionStatus::RolledBack,
+            TransactionStatus::Failed("err".into()),
+        ] {
+            let json = serde_json::to_string(&status).unwrap();
+            let back: TransactionStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, status);
+        }
+    }
+
+    #[test]
+    fn serde_roundtrip_transaction_op_status_all_variants() {
+        for status in [
+            TransactionOpStatus::Pending,
+            TransactionOpStatus::InProgress,
+            TransactionOpStatus::Complete,
+            TransactionOpStatus::Failed,
+            TransactionOpStatus::RolledBack,
+        ] {
+            let json = serde_json::to_string(&status).unwrap();
+            let back: TransactionOpStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, status);
+        }
+    }
+
+    #[test]
+    fn serde_roundtrip_transaction_op_type_all_variants() {
+        for op_type in [
+            TransactionOpType::Install,
+            TransactionOpType::Remove,
+            TransactionOpType::Upgrade {
+                from_version: "1.0".into(),
+            },
+        ] {
+            let json = serde_json::to_string(&op_type).unwrap();
+            let back: TransactionOpType = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, op_type);
+        }
+    }
+
+    #[test]
+    fn serde_roundtrip_package_db_entry() {
+        let entry = PackageDbEntry {
+            name: "nginx".into(),
+            version: "1.24".into(),
+            source: PackageSource::System,
+            installed_at: Utc::now(),
+            installed_by: "ark".into(),
+            size_bytes: 1024,
+            checksum: "abc123".into(),
+            files: vec!["/usr/sbin/nginx".into()],
+            dependencies: vec!["libc".into()],
+            transaction_id: Some("txn-000001".into()),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: PackageDbEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.name, entry.name);
+        assert_eq!(back.version, entry.version);
+        assert_eq!(back.size_bytes, entry.size_bytes);
+        assert_eq!(back.files, entry.files);
+        assert_eq!(back.dependencies, entry.dependencies);
+        assert_eq!(back.transaction_id, entry.transaction_id);
+    }
+
+    #[test]
+    fn serde_roundtrip_package_db() {
+        let mut db = PackageDb::new();
+        db.register(PackageDbEntry {
+            name: "curl".into(),
+            version: "8.0".into(),
+            source: PackageSource::System,
+            installed_at: Utc::now(),
+            installed_by: "ark".into(),
+            size_bytes: 512,
+            checksum: "def456".into(),
+            files: vec!["/usr/bin/curl".into()],
+            dependencies: vec![],
+            transaction_id: None,
+        });
+        let json = serde_json::to_string(&db).unwrap();
+        let back: PackageDb = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.count(), 1);
+        assert!(back.is_installed("curl"));
+    }
+
+    #[test]
+    fn serde_roundtrip_integrity_issue() {
+        let issue = IntegrityIssue {
+            package: "nginx".into(),
+            issue_type: IntegrityIssueType::MissingFile("/usr/sbin/nginx".into()),
+        };
+        let json = serde_json::to_string(&issue).unwrap();
+        let back: IntegrityIssue = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.package, issue.package);
+        assert_eq!(back.issue_type, issue.issue_type);
+    }
+
+    #[test]
+    fn serde_roundtrip_transaction_log() {
+        let mut log = TransactionLog::new();
+        let id = log.begin("test-user");
+        log.commit(&id);
+        let json = serde_json::to_string(&log).unwrap();
+        let back: TransactionLog = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.len(), 1);
     }
 }

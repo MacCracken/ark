@@ -21,21 +21,19 @@ mod tests;
 // Re-export all public types so external consumers see the same flat API
 // as they did when this was a single ark.rs file.
 pub use types::{
-    ArkCommand, ArkConfig, ArkOutput, ArkOutputLine, ArkResult, InstallPlan, InstallStep,
-    IntegrityIssue, IntegrityIssueType, PackageDb, PackageDbEntry, PlanExecutionResult, StepResult,
-    Transaction, TransactionId, TransactionLog, TransactionOp, TransactionOpStatus,
-    TransactionOpType, TransactionStatus, DEFAULT_TRANSACTION_LOG_PATH,
+    ArkCommand, ArkConfig, ArkOutput, ArkOutputLine, ArkResult, DEFAULT_TRANSACTION_LOG_PATH,
+    InstallPlan, InstallStep, IntegrityIssue, IntegrityIssueType, PackageDb, PackageDbEntry,
+    PlanExecutionResult, StepResult, Transaction, TransactionId, TransactionLog, TransactionOp,
+    TransactionOpStatus, TransactionOpType, TransactionStatus,
 };
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use tracing::{debug, info, warn};
 
-use nous::{
-    AvailableUpdate, InstalledPackage, NousResolver, PackageSource, ResolvedPackage,
-};
+use nous::{AvailableUpdate, InstalledPackage, NousResolver, PackageSource, ResolvedPackage};
 
-/// Ark version string.
-pub const ARK_VERSION: &str = "0.1.0";
+/// Ark version string, derived from Cargo.toml at compile time.
+pub const ARK_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // ---------------------------------------------------------------------------
 // ArkPackageManager — the main engine
@@ -645,6 +643,7 @@ impl ArkPackageManager {
     }
 
     /// Format an install plan as human-readable output.
+    #[must_use]
     pub fn format_plan(plan: &InstallPlan) -> ArkOutput {
         let mut output = ArkOutput::new();
         output
@@ -872,6 +871,7 @@ fn parse_source_arg(s: &str) -> Result<PackageSource> {
 
 /// Well-known package groups and their meta-package mappings.
 /// `ark install --group <name>` resolves to installing the meta-package.
+#[must_use]
 pub fn group_meta_package(group: &str) -> Option<&'static str> {
     match group {
         "desktop" => Some("agnos-desktop"),
