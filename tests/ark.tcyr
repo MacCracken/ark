@@ -1,0 +1,470 @@
+# ark test suite - ported from 46 Rust tests (1803 lines)
+# Uses accessor functions (load64/store64) for struct field access
+
+include "src/main.cyr"
+
+# =========================================================================
+# Helper: create a test PackageDbEntry
+# =========================================================================
+
+fn make_test_entry(name, version, source, size, file_list) {
+    var e = db_entry_new(name, version, source);
+    pdbe_set_size(e, size);
+    store64(e + 48, str_from("abc123"));
+    store64(e + 56, file_list);
+    store64(e + 32, str_from("root"));
+    return e;
+}
+
+# =========================================================================
+# parse_args / ArkCommand tests
+# =========================================================================
+
+fn test_parse_args() {
+    test_group("parse_args");
+
+    var c1 = ark_cmd_new(CMD_INSTALL);
+    vec_push(acmd_packages(c1), str_from("nginx"));
+    assert_eq(acmd_tag(c1), CMD_INSTALL, "install tag");
+    assert_eq(vec_len(acmd_packages(c1)), 1, "install single");
+    assert_eq(acmd_force(c1), 0, "no force");
+
+    var c2 = ark_cmd_new(CMD_INSTALL);
+    vec_push(acmd_packages(c2), str_from("nginx"));
+    vec_push(acmd_packages(c2), str_from("curl"));
+    acmd_set_force(c2, 1);
+    assert_eq(vec_len(acmd_packages(c2)), 2, "install multi");
+    assert_eq(acmd_force(c2), 1, "force flag");
+
+    var c3 = ark_cmd_new(CMD_REMOVE);
+    vec_push(acmd_packages(c3), str_from("nginx"));
+    assert_eq(acmd_tag(c3), CMD_REMOVE, "remove tag");
+    assert_eq(acmd_purge(c3), 0, "no purge");
+
+    var c4 = ark_cmd_new(CMD_REMOVE);
+    acmd_set_purge(c4, 1);
+    assert_eq(acmd_purge(c4), 1, "purge flag");
+
+    var c5 = ark_cmd_new(CMD_SEARCH);
+    acmd_set_query(c5, str_from("web server"));
+    assert(str_eq(acmd_query(c5), str_from("web server")), "search query");
+
+    var c6 = ark_cmd_new(CMD_SEARCH);
+    acmd_set_source(c6, SOURCE_SYSTEM);
+    assert_eq(acmd_source(c6), SOURCE_SYSTEM, "search source");
+
+    var c7 = ark_cmd_new(CMD_LIST);
+    assert_eq(acmd_source(c7), 0 - 1, "list no filter");
+
+    var c8 = ark_cmd_new(CMD_LIST);
+    acmd_set_source(c8, SOURCE_MARKETPLACE);
+    assert_eq(acmd_source(c8), SOURCE_MARKETPLACE, "list mkt");
+
+    var c9 = ark_cmd_new(CMD_INFO);
+    acmd_set_package(c9, str_from("nginx"));
+    assert(str_eq(acmd_package(c9), str_from("nginx")), "info pkg");
+
+    assert_eq(acmd_tag(ark_cmd_new(CMD_UPDATE)), CMD_UPDATE, "update");
+    assert_eq(acmd_tag(ark_cmd_new(CMD_STATUS)), CMD_STATUS, "status");
+
+    var c10 = ark_cmd_new(CMD_UPGRADE);
+    assert_eq(vec_len(acmd_packages(c10)), 0, "upgrade all");
+
+    var c11 = ark_cmd_new(CMD_HOLD);
+    vec_push(acmd_packages(c11), str_from("nginx"));
+    vec_push(acmd_packages(c11), str_from("curl"));
+    assert_eq(vec_len(acmd_packages(c11)), 2, "hold pkgs");
+
+    var c12 = ark_cmd_new(CMD_VERIFY);
+    assert_eq(str_len(acmd_package(c12)), 0, "verify all");
+
+    var c13 = ark_cmd_new(CMD_HISTORY);
+    assert_eq(acmd_count(c13), 0 - 1, "history default");
+    acmd_set_count(c13, 5);
+    assert_eq(acmd_count(c13), 5, "history count");
+}
+
+# =========================================================================
+# ArkConfig tests
+# =========================================================================
+
+fn test_ark_config() {
+    test_group("ark_config");
+    var cfg = ark_config_default();
+    assert_eq(acfg_strategy(cfg), STRATEGY_SYSTEM_FIRST, "strategy");
+    assert_eq(acfg_confirm_sys(cfg), 1, "confirm sys");
+    assert_eq(acfg_confirm_rm(cfg), 1, "confirm rm");
+    assert_eq(acfg_auto_update(cfg), 0, "no auto update");
+    assert_eq(acfg_color(cfg), 1, "color on");
+    assert(str_eq(acfg_mkt_dir(cfg), str_from("/var/lib/agnos/marketplace")), "mkt dir");
+    assert(str_eq(acfg_cache_dir(cfg), str_from("/var/cache/agnos/ark")), "cache dir");
+    assert(str_eq(acfg_db_path(cfg), str_from(DEFAULT_PACKAGE_DB_PATH)), "db path");
+    assert(str_eq(acfg_log_path(cfg), str_from(DEFAULT_TRANSACTION_LOG_PATH)), "log path");
+}
+
+# =========================================================================
+# PackageDb tests
+# =========================================================================
+
+fn test_package_db() {
+    test_group("package_db");
+
+    # Register and get
+    var db = pkg_db_new();
+    var f1 = vec_new(); vec_push(f1, str_from("/usr/bin/nginx"));
+    pkg_db_register(db, make_test_entry(str_from("nginx"), str_from("1.25"), SOURCE_SYSTEM, 1024, f1));
+    assert(pkg_db_is_installed(db, str_from("nginx")), "nginx installed");
+    var got = pkg_db_get(db, "nginx");
+    assert(got > 0, "get nginx");
+    assert(str_eq(pdbe_version(got), str_from("1.25")), "nginx version");
+
+    # Unregister
+    var db2 = pkg_db_new();
+    pkg_db_register(db2, make_test_entry(str_from("pkg"), str_from("1.0"), SOURCE_SYSTEM, 1024, vec_new()));
+    assert(pkg_db_unregister(db2, str_from("pkg")) > 0, "unregister");
+    assert(pkg_db_is_installed(db2, str_from("pkg")) == 0, "pkg gone");
+
+    # Count
+    var db3 = pkg_db_new();
+    pkg_db_register(db3, make_test_entry(str_from("a"), str_from("1.0"), SOURCE_SYSTEM, 1024, vec_new()));
+    pkg_db_register(db3, make_test_entry(str_from("b"), str_from("2.0"), SOURCE_SYSTEM, 1024, vec_new()));
+    assert_eq(pkg_db_count(db3), 2, "count 2");
+
+    # Search
+    var db4 = pkg_db_new();
+    pkg_db_register(db4, make_test_entry(str_from("nginx-core"), str_from("1.25"), SOURCE_SYSTEM, 1024, vec_new()));
+    pkg_db_register(db4, make_test_entry(str_from("redis"), str_from("7.0"), SOURCE_SYSTEM, 1024, vec_new()));
+    assert_eq(vec_len(pkg_db_search(db4, str_from("nginx"))), 1, "search nginx");
+
+    # By source
+    var db5 = pkg_db_new();
+    pkg_db_register(db5, make_test_entry(str_from("agent1"), str_from("1.0"), SOURCE_MARKETPLACE, 1024, vec_new()));
+    pkg_db_register(db5, make_test_entry(str_from("nginx"), str_from("1.25"), SOURCE_SYSTEM, 1024, vec_new()));
+    assert_eq(vec_len(pkg_db_by_source(db5, SOURCE_MARKETPLACE)), 1, "by_source mkt");
+
+    # Total size
+    var db6 = pkg_db_new();
+    pkg_db_register(db6, make_test_entry(str_from("a"), str_from("1.0"), SOURCE_SYSTEM, 500, vec_new()));
+    pkg_db_register(db6, make_test_entry(str_from("b"), str_from("1.0"), SOURCE_SYSTEM, 700, vec_new()));
+    assert_eq(pkg_db_total_size(db6), 1200, "total size");
+
+    # Files for
+    var db7 = pkg_db_new();
+    var f7 = vec_new(); vec_push(f7, str_from("/usr/bin/nginx")); vec_push(f7, str_from("/etc/nginx/nginx.conf"));
+    pkg_db_register(db7, make_test_entry(str_from("nginx"), str_from("1.25"), SOURCE_SYSTEM, 1024, f7));
+    assert_eq(vec_len(pkg_db_files_for(db7, str_from("nginx"))), 2, "files_for");
+
+    # Owner of
+    var db8 = pkg_db_new();
+    var fb = vec_new(); vec_push(fb, str_from("/usr/bin/bash"));
+    pkg_db_register(db8, make_test_entry(str_from("bash"), str_from("5.3"), SOURCE_SYSTEM, 1024, fb));
+    var fz = vec_new(); vec_push(fz, str_from("/usr/bin/zsh"));
+    pkg_db_register(db8, make_test_entry(str_from("zsh"), str_from("5.9"), SOURCE_SYSTEM, 1024, fz));
+    assert(str_eq(pkg_db_owner_of(db8, str_from("/usr/bin/bash")), str_from("bash")), "owner bash");
+    assert(str_eq(pkg_db_owner_of(db8, str_from("/usr/bin/zsh")), str_from("zsh")), "owner zsh");
+    assert_eq(str_len(pkg_db_owner_of(db8, str_from("/usr/bin/fish"))), 0, "no owner fish");
+
+    # Integrity - no manifest
+    var db9 = pkg_db_new();
+    pkg_db_register(db9, make_test_entry(str_from("empty-pkg"), str_from("1.0"), SOURCE_SYSTEM, 1024, vec_new()));
+    assert_eq(vec_len(pkg_db_check_integrity(db9)), 1, "integrity no manifest");
+
+    # Integrity - with manifest
+    var db10 = pkg_db_new();
+    var fg = vec_new(); vec_push(fg, str_from("/usr/bin/good"));
+    pkg_db_register(db10, make_test_entry(str_from("good-pkg"), str_from("1.0"), SOURCE_SYSTEM, 1024, fg));
+    assert_eq(vec_len(pkg_db_check_integrity(db10)), 0, "integrity ok");
+
+    # Hold/unhold
+    var db11 = pkg_db_new();
+    pkg_db_register(db11, make_test_entry(str_from("nginx"), str_from("1.24"), SOURCE_SYSTEM, 1024, vec_new()));
+    var e11 = pkg_db_get(db11, "nginx");
+    assert_eq(pdbe_held(e11), 0, "not held");
+    assert(pkg_db_hold(db11, str_from("nginx")), "hold ok");
+    assert_eq(pdbe_held(e11), 1, "held");
+    assert(pkg_db_unhold(db11, str_from("nginx")), "unhold ok");
+    assert_eq(pdbe_held(e11), 0, "unheld");
+
+    # Hold nonexistent
+    var db12 = pkg_db_new();
+    assert(pkg_db_hold(db12, str_from("nope")) == 0, "hold nonexistent");
+
+    # Held packages
+    var db13 = pkg_db_new();
+    pkg_db_register(db13, make_test_entry(str_from("a"), str_from("1.0"), SOURCE_SYSTEM, 1024, vec_new()));
+    pkg_db_register(db13, make_test_entry(str_from("b"), str_from("1.0"), SOURCE_SYSTEM, 1024, vec_new()));
+    pkg_db_register(db13, make_test_entry(str_from("c"), str_from("1.0"), SOURCE_SYSTEM, 1024, vec_new()));
+    pkg_db_hold(db13, str_from("a"));
+    pkg_db_hold(db13, str_from("c"));
+    assert_eq(vec_len(pkg_db_held_packages(db13)), 2, "held count");
+
+    # Resolve install order
+    var db14 = pkg_db_new();
+    var app_e = make_test_entry(str_from("app"), str_from("1.0"), SOURCE_SYSTEM, 1024, vec_new());
+    vec_push(pdbe_deps(app_e), str_from("lib"));
+    pkg_db_register(db14, app_e);
+    pkg_db_register(db14, make_test_entry(str_from("lib"), str_from("1.0"), SOURCE_SYSTEM, 1024, vec_new()));
+    var to_inst = vec_new(); vec_push(to_inst, str_from("app")); vec_push(to_inst, str_from("lib"));
+    var order_res = pkg_db_resolve_install_order(db14, to_inst);
+    assert(is_ok(order_res), "resolve ok");
+    var order = result_unwrap(order_res);
+    var lib_idx = 0 - 1;
+    var app_idx = 0 - 1;
+    var k = 0;
+    while (k < vec_len(order)) {
+        if (str_eq(vec_get(order, k), str_from("lib"))) { lib_idx = k; }
+        if (str_eq(vec_get(order, k), str_from("app"))) { app_idx = k; }
+        k = k + 1;
+    }
+    assert(lib_idx < app_idx, "lib before app");
+
+    # Circular dep
+    var db15 = pkg_db_new();
+    var ea = make_test_entry(str_from("a"), str_from("1.0"), SOURCE_SYSTEM, 1024, vec_new());
+    vec_push(pdbe_deps(ea), str_from("b"));
+    var eb = make_test_entry(str_from("b"), str_from("1.0"), SOURCE_SYSTEM, 1024, vec_new());
+    vec_push(pdbe_deps(eb), str_from("a"));
+    pkg_db_register(db15, ea);
+    pkg_db_register(db15, eb);
+    var circ = vec_new(); vec_push(circ, str_from("a")); vec_push(circ, str_from("b"));
+    assert(is_err_result(pkg_db_resolve_install_order(db15, circ)), "circular dep");
+}
+
+# =========================================================================
+# TransactionLog tests
+# =========================================================================
+
+fn test_transaction_log() {
+    test_group("transaction_log");
+
+    # Begin and commit
+    var log = txn_log_new();
+    var id = txn_log_begin(log, str_from("root"));
+    assert_eq(txn_log_len(log), 1, "1 txn");
+    assert(txn_log_commit(log, id), "commit ok");
+    var t = txn_log_get(log, id);
+    assert(t > 0, "get txn");
+    assert_eq(txn_status(t), TXN_COMMITTED, "committed");
+    assert(txn_completed(t) > 0, "completed set");
+
+    # Rollback
+    var log2 = txn_log_new();
+    var id2 = txn_log_begin(log2, str_from("root"));
+    var op = txn_op_new(OP_INSTALL, str_from("nginx"), str_from("1.25"), SOURCE_SYSTEM);
+    txn_log_add_op(log2, id2, op);
+    assert(txn_log_rollback(log2, id2), "rollback ok");
+    var t2 = txn_log_get(log2, id2);
+    assert_eq(txn_status(t2), TXN_ROLLED_BACK, "rolled back");
+    assert_eq(top_status(vec_get(txn_ops(t2), 0)), OP_STATUS_ROLLED_BACK, "op rolled back");
+
+    # Add op
+    var log3 = txn_log_new();
+    var id3 = txn_log_begin(log3, str_from("user1"));
+    var op3 = txn_op_new(OP_INSTALL, str_from("pkg1"), str_from("1.0"), SOURCE_MARKETPLACE);
+    assert(txn_log_add_op(log3, id3, op3), "add op ok");
+    assert_eq(vec_len(txn_ops(txn_log_get(log3, id3))), 1, "1 op");
+
+    # Mark op complete
+    var log4 = txn_log_new();
+    var id4 = txn_log_begin(log4, str_from("root"));
+    var op4 = txn_op_new(OP_INSTALL, str_from("test-pkg"), str_from(""), SOURCE_SYSTEM);
+    top_set_status(op4, OP_STATUS_IN_PROGRESS);
+    txn_log_add_op(log4, id4, op4);
+    assert(txn_log_mark_op_complete(log4, id4, str_from("test-pkg")), "mark complete");
+    assert_eq(top_status(vec_get(txn_ops(txn_log_get(log4, id4)), 0)), OP_STATUS_COMPLETE, "op complete");
+
+    # Mark op failed
+    var log5 = txn_log_new();
+    var id5 = txn_log_begin(log5, str_from("root"));
+    var op5 = txn_op_new(OP_REMOVE, str_from("fail-pkg"), str_from(""), SOURCE_SYSTEM);
+    top_set_status(op5, OP_STATUS_IN_PROGRESS);
+    txn_log_add_op(log5, id5, op5);
+    assert(txn_log_mark_op_failed(log5, id5, str_from("fail-pkg"), str_from("permission denied")), "mark failed");
+    var failed_op = vec_get(txn_ops(txn_log_get(log5, id5)), 0);
+    assert_eq(top_status(failed_op), OP_STATUS_FAILED, "op failed");
+    assert(str_eq(top_error(failed_op), str_from("permission denied")), "op error");
+
+    # Fail transaction
+    var log6 = txn_log_new();
+    var id6 = txn_log_begin(log6, str_from("root"));
+    assert(txn_log_fail(log6, id6, str_from("disk full")), "fail txn");
+    assert_eq(txn_status(txn_log_get(log6, id6)), TXN_FAILED, "status failed");
+
+    # Cannot fail committed
+    var log7 = txn_log_new();
+    var id7 = txn_log_begin(log7, str_from("root"));
+    txn_log_commit(log7, id7);
+    assert(txn_log_fail(log7, id7, str_from("too late")) == 0, "cant fail committed");
+
+    # Cannot fail rolled back
+    var log8 = txn_log_new();
+    var id8 = txn_log_begin(log8, str_from("root"));
+    txn_log_rollback(log8, id8);
+    assert(txn_log_fail(log8, id8, str_from("too late")) == 0, "cant fail rolled back");
+
+    # Cannot add op after commit
+    var log9 = txn_log_new();
+    var id9 = txn_log_begin(log9, str_from("root"));
+    txn_log_commit(log9, id9);
+    assert(txn_log_add_op(log9, id9, txn_op_new(OP_INSTALL, str_from("x"), str_from(""), SOURCE_SYSTEM)) == 0, "cant add after commit");
+
+    # Recent
+    var log10 = txn_log_new();
+    txn_log_commit(log10, txn_log_begin(log10, str_from("u1")));
+    txn_log_commit(log10, txn_log_begin(log10, str_from("u2")));
+    var idc = txn_log_begin(log10, str_from("u3"));
+    txn_log_commit(log10, idc);
+    var recent = txn_log_recent(log10, 2);
+    assert_eq(vec_len(recent), 2, "recent 2");
+    assert(str_eq(txn_id(vec_get(recent, 0)), idc), "most recent first");
+
+    # Sequential IDs
+    var log11 = txn_log_new();
+    var idx = txn_log_begin(log11, str_from("u"));
+    var idy = txn_log_begin(log11, str_from("u"));
+    assert(str_eq(idx, idy) == 0, "ids differ");
+    assert(str_starts_with(idx, str_from("txn-")), "id prefix");
+
+    # Empty
+    var log12 = txn_log_new();
+    assert(txn_log_is_empty(log12), "empty");
+    assert_eq(txn_log_len(log12), 0, "len 0");
+
+    # Status display
+    assert(str_eq(txn_status_to_str(TXN_IN_PROGRESS, str_from("")), str_from("in-progress")), "str in-progress");
+    assert(str_eq(txn_status_to_str(TXN_COMMITTED, str_from("")), str_from("committed")), "str committed");
+    assert(str_eq(txn_status_to_str(TXN_ROLLED_BACK, str_from("")), str_from("rolled-back")), "str rolled-back");
+    assert(str_eq(txn_status_to_str(TXN_FAILED, str_from("err")), str_from("failed: err")), "str failed");
+}
+
+# =========================================================================
+# ArkOutput tests
+# =========================================================================
+
+fn test_ark_output() {
+    test_group("ark_output");
+
+    var out = ark_output_new();
+    ark_output_add(out, output_line_header(str_from("Test Header")));
+    ark_output_add(out, output_line_package(str_from("nginx"), str_from("1.24.0"), SOURCE_SYSTEM, str_from("HTTP server")));
+    ark_output_add(out, output_line_separator());
+    ark_output_add(out, output_line_success(str_from("Done")));
+    ark_output_add(out, output_line_error(str_from("Something failed")));
+    ark_output_add(out, output_line_warning(str_from("Caution")));
+
+    var text = ark_output_to_display_string(out);
+    assert(str_contains(text, str_from("=== Test Header ===")), "header");
+    assert(str_contains(text, str_from("nginx")), "pkg name");
+    assert(str_contains(text, str_from("[system]")), "pkg source");
+    assert(str_contains(text, str_from("---")), "separator");
+    assert(str_contains(text, str_from("OK: Done")), "success");
+    assert(str_contains(text, str_from("ERROR: Something failed")), "error");
+    assert(str_contains(text, str_from("WARN: Caution")), "warning");
+
+    var out2 = ark_output_new();
+    ark_output_add(out2, output_line_info(str_from("Status"), str_from("OK")));
+    assert(str_contains(ark_output_to_display_string(out2), str_from("Status: OK")), "info line");
+
+    # Color contains ANSI
+    var out3 = ark_output_new();
+    ark_output_add(out3, output_line_success(str_from("ok")));
+    assert(str_contains(ark_output_to_colored_string(out3), str_from("\x1b[")), "has ansi");
+    assert(str_contains(ark_output_to_display_string(out3), str_from("\x1b[")) == 0, "no ansi plain");
+
+    # Render flag
+    var out4 = ark_output_new();
+    ark_output_add(out4, output_line_header(str_from("test")));
+    assert(str_contains(ark_output_render(out4, 1), str_from("\x1b[")), "render color");
+    assert(str_contains(ark_output_render(out4, 0), str_from("\x1b[")) == 0, "render plain");
+
+    # Empty
+    assert_eq(str_len(ark_output_to_display_string(ark_output_new())), 0, "empty output");
+}
+
+# =========================================================================
+# InstallPlan tests
+# =========================================================================
+
+fn test_install_plan() {
+    test_group("install_plan");
+
+    var p = install_plan_new();
+    assert_eq(vec_len(iplan_steps(p)), 0, "new empty");
+    assert_eq(iplan_root(p), 0, "no root");
+    assert_eq(iplan_size(p), 0, "zero size");
+
+    # Format plan
+    var p2 = install_plan_new();
+    vec_push(iplan_steps(p2), step_system_install(str_from("nginx"), str_from("")));
+    vec_push(iplan_steps(p2), step_marketplace_install(str_from("my-agent"), str_from("1.0.0")));
+    iplan_set_root(p2, 1);
+    store64(p2 + 16, 1024);
+    var text = ark_output_to_display_string(ark_format_plan(p2));
+    assert(str_contains(text, str_from("Execution plan")), "plan header");
+    assert(str_contains(text, str_from("apt-get install nginx")), "apt step");
+    assert(str_contains(text, str_from("marketplace install my-agent")), "mkt step");
+    assert(str_contains(text, str_from("true")), "root true");
+}
+
+# =========================================================================
+# Source / Group tests
+# =========================================================================
+
+fn test_sources_and_groups() {
+    test_group("sources_groups");
+
+    assert(streq(source_to_str(SOURCE_SYSTEM), "system"), "system str");
+    assert(streq(source_to_str(SOURCE_MARKETPLACE), "marketplace"), "mkt str");
+    assert(streq(source_to_str(SOURCE_FLUTTER_APP), "flutter-app"), "flutter str");
+    assert(streq(source_to_str(SOURCE_UNKNOWN), "unknown"), "unknown str");
+
+    assert(streq(group_meta_package("desktop"), "agnos-desktop"), "desktop grp");
+    assert(streq(group_meta_package("ai"), "agnos-ai"), "ai grp");
+    assert(streq(group_meta_package("ml"), "agnos-ai"), "ml grp");
+    assert(streq(group_meta_package("shell"), "agnoshi"), "shell grp");
+    assert(streq(group_meta_package("edge"), "agnos-edge-agent"), "edge grp");
+    assert_eq(group_meta_package("unknown"), 0, "unknown grp");
+
+    assert(is_ok(parse_source_str("system")), "parse system");
+    assert_eq(result_unwrap(parse_source_str("system")), SOURCE_SYSTEM, "system val");
+    assert_eq(result_unwrap(parse_source_str("apt")), SOURCE_SYSTEM, "apt val");
+    assert_eq(result_unwrap(parse_source_str("marketplace")), SOURCE_MARKETPLACE, "mkt val");
+    assert_eq(result_unwrap(parse_source_str("flutter")), SOURCE_FLUTTER_APP, "flutter val");
+    assert(is_err_result(parse_source_str("bogus")), "bogus fails");
+}
+
+# =========================================================================
+# ArkPackageManager integration
+# =========================================================================
+
+fn test_manager() {
+    test_group("ark_mgr");
+    var cfg = ark_config_default();
+    store64(cfg + 40, str_from("/tmp/ark-test-mkt"));
+    store64(cfg + 48, str_from("/tmp/ark-test-cache"));
+    var mgr = ark_mgr_new(cfg);
+    var text = ark_output_to_display_string(ark_status(mgr));
+    assert(str_contains(text, str_from("ark status")), "status header");
+    assert(str_contains(text, str_from(ARK_VERSION_STR)), "version");
+    assert(str_contains(text, str_from("ark is operational")), "operational");
+}
+
+# =========================================================================
+# Main test runner
+# =========================================================================
+
+fn test_main() {
+    alloc_init();
+    test_parse_args();
+    test_ark_config();
+    test_package_db();
+    test_transaction_log();
+    test_ark_output();
+    test_install_plan();
+    test_sources_and_groups();
+    test_manager();
+    return assert_summary();
+}
+
+var exit_code = test_main();
+syscall(60, exit_code);

@@ -1,0 +1,111 @@
+# ark benchmarks - manual timing (fn pointers unstable via pipe compile)
+
+include "src/main.cyr"
+
+fn now_us() {
+    var buf[16];
+    syscall(96, &buf, 0);
+    var sec = load64(&buf);
+    var usec = load64(&buf + 8);
+    return sec * 1000000 + usec;
+}
+
+fn report(name, iters, start, end) {
+    var elapsed = end - start;
+    var per_iter = elapsed / iters;
+    print(name, strlen(name));
+    print(": ", 2);
+    fmt_int(iters);
+    print(" iters, ", 8);
+    fmt_int(elapsed);
+    print(" us total, ", 11);
+    fmt_int(per_iter);
+    print(" us/iter\n", 9);
+}
+
+fn bmain() {
+    alloc_init();
+    println("=== ark benchmarks ===");
+
+    var n = 100000;
+    var t0 = now_us();
+    var i = 0;
+    while (i < n) { ark_cmd_new(CMD_INSTALL); i = i + 1; }
+    report("cmd_create", n, t0, now_us());
+
+    t0 = now_us();
+    i = 0;
+    while (i < n) { ark_config_default(); i = i + 1; }
+    report("config_default", n, t0, now_us());
+
+    t0 = now_us();
+    i = 0;
+    while (i < n) { source_to_str(SOURCE_SYSTEM); i = i + 1; }
+    report("source_to_str", n, t0, now_us());
+
+    t0 = now_us();
+    i = 0;
+    while (i < n) { group_meta_package("desktop"); i = i + 1; }
+    report("group_meta_pkg", n, t0, now_us());
+
+    # PackageDb with 20 entries
+    var db = pkg_db_new();
+    i = 0;
+    while (i < 20) {
+        var nsb = str_builder_new();
+        str_builder_add_cstr(nsb, "pkg-");
+        str_builder_add_int(nsb, i);
+        var entry = db_entry_new(str_builder_build(nsb), str_from("1.0"), SOURCE_SYSTEM);
+        pdbe_set_size(entry, 1024);
+        pkg_db_register(db, entry);
+        i = i + 1;
+    }
+
+    n = 10000;
+    t0 = now_us();
+    i = 0;
+    while (i < n) { pkg_db_search(db, str_from("pkg-1")); i = i + 1; }
+    report("db_search_20", n, t0, now_us());
+
+    t0 = now_us();
+    i = 0;
+    while (i < n) { pkg_db_total_size(db); i = i + 1; }
+    report("db_total_size_20", n, t0, now_us());
+
+    t0 = now_us();
+    i = 0;
+    while (i < n) { pkg_db_check_integrity(db); i = i + 1; }
+    report("db_integrity_20", n, t0, now_us());
+
+    # TransactionLog
+    n = 10000;
+    t0 = now_us();
+    i = 0;
+    while (i < n) {
+        var log = txn_log_new();
+        var tid = txn_log_begin(log, str_from("user"));
+        txn_log_commit(log, tid);
+        i = i + 1;
+    }
+    report("txn_begin_commit", n, t0, now_us());
+
+    # Output formatting
+    n = 10000;
+    t0 = now_us();
+    i = 0;
+    while (i < n) {
+        var out = ark_output_new();
+        ark_output_add(out, output_line_header(str_from("Test")));
+        ark_output_add(out, output_line_info(str_from("K"), str_from("V")));
+        ark_output_add(out, output_line_separator());
+        ark_output_to_display_string(out);
+        i = i + 1;
+    }
+    report("output_display", n, t0, now_us());
+
+    println("=== done ===");
+    return 0;
+}
+
+var r = bmain();
+syscall(60, r);
