@@ -1,6 +1,6 @@
 [package]
 name = "ark"
-version = "0.1.0"
+version = "0.8.0"
 description = "ark — Cyrius port (from 4363 lines of Rust)"
 license = "GPL-3.0-only"
 language = "cyrius"

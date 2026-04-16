@@ -511,6 +511,41 @@ fn test_security() {
     var iss_one = pkg_db_check_integrity_full(db3, str_from("empty-pkg"));
     assert_eq(vec_len(iss_one), 1, "full: filtered to 1 issue");
 
+    # Per-file checksums
+    var db4 = pkg_db_new();
+    var pfc_files = vec_new();
+    vec_push(pfc_files, str_from("/tmp/ark-test-pfc"));
+    var pfc_entry = make_test_entry(
+        str_from("pfc-pkg"), str_from("1.0"), SOURCE_SYSTEM, 100, pfc_files);
+    pdbe_set_file_hash(pfc_entry, str_from("/tmp/ark-test-pfc"), str_from("abc123"));
+    var got_hash = pdbe_get_file_hash(pfc_entry, str_from("/tmp/ark-test-pfc"));
+    assert(got_hash > 0, "per-file hash stored");
+    assert(str_eq(got_hash, str_from("abc123")), "per-file hash value");
+    var no_hash = pdbe_get_file_hash(pfc_entry, str_from("/nonexistent"));
+    assert_eq(no_hash, 0, "missing file hash returns 0");
+
+    # Package signing (Ed25519)
+    ed25519_init();
+    sha256_global_init();
+    var sk = alloc(64);
+    var pk = alloc(32);
+    var kid = generate_keypair(sk, pk);
+    assert(kid > 0, "keypair generated");
+    # Sign some test data
+    var test_msg = "hello ark";
+    var sig = sign_data(test_msg, 9, sk);
+    assert(sig > 0, "sig produced");
+    assert(verify_data(test_msg, 9, sig, pk), "sig verifies");
+    # Tampered data should fail
+    assert(verify_data("hello arx", 9, sig, pk) == 0, "tampered sig fails");
+
+    # PackageDbEntry signing round-trip
+    var sign_entry = make_test_entry(
+        str_from("signed-pkg"), str_from("2.0"), SOURCE_MARKETPLACE, 512, vec_new());
+    assert_eq(str_len(pdbe_signature(sign_entry)), 0, "unsigned initially");
+    # Can't verify unsigned
+    assert_eq(pdbe_verify(sign_entry, pk), 0, "unsigned verify = 0");
+
     # L7: txn_log_recent on empty log
     var elog = txn_log_new();
     var erecent = txn_log_recent(elog, 10);

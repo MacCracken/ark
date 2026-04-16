@@ -16,7 +16,7 @@
 # Constants
 # =========================================================================
 
-var ARK_VERSION_STR = "0.1.0";
+var ARK_VERSION_STR = "0.8.0";
 
 var DEFAULT_TRANSACTION_LOG_PATH = "/var/lib/agnos/ark/transaction.log";
 var DEFAULT_PACKAGE_DB_PATH = "/var/lib/agnos/ark/packages.json";
@@ -648,7 +648,16 @@ fn txn_log_persist(log, txn) {
     str_builder_add_cstr(sb, "}\n");
     var json_line = str_builder_build(sb);
     # Use locked append to prevent concurrent write interleaving (H3)
-    file_append_locked(str_data(tlog_path(log)), str_data(json_line), str_len(json_line));
+    # Locked append + fsync for crash safety
+    var lpath = str_data(tlog_path(log));
+    var lfd = file_open(lpath, O_WRONLY | O_CREAT | O_APPEND, 420);
+    if (lfd >= 0) {
+        file_lock(lfd);
+        file_write(lfd, str_data(json_line), str_len(json_line));
+        syscall(74, lfd);
+        file_unlock(lfd);
+        file_close(lfd);
+    }
     return 1;
 }
 
@@ -791,10 +800,11 @@ fn txn_log_is_empty(log) { return vec_len(tlog_txns(log)) == 0; }
 # PackageDbEntry
 # Fields: name(0) version(8) source(16) installed_at(24) installed_by(32)
 #         size_bytes(40) checksum(48) files(56) dependencies(64)
-#         transaction_id(72) held(80)   => 88 bytes
+#         transaction_id(72) held(80) file_checksums(88)
+#         signature(96) signer_key_id(104)   => 112 bytes
 # =========================================================================
 
-var PDBE_SZ = 88;
+var PDBE_SZ = 112;
 
 fn pdbe_name(p) { return load64(p); }
 fn pdbe_version(p) { return load64(p + 8); }
@@ -802,10 +812,16 @@ fn pdbe_source(p) { return load64(p + 16); }
 fn pdbe_size(p) { return load64(p + 40); }
 fn pdbe_set_size(p, v) { store64(p + 40, v); }
 fn pdbe_checksum(p) { return load64(p + 48); }
+fn pdbe_set_checksum(p, v) { store64(p + 48, v); }
 fn pdbe_files(p) { return load64(p + 56); }
 fn pdbe_deps(p) { return load64(p + 64); }
 fn pdbe_held(p) { return load64(p + 80); }
 fn pdbe_set_held(p, v) { store64(p + 80, v); }
+fn pdbe_file_checksums(p) { return load64(p + 88); }
+fn pdbe_signature(p) { return load64(p + 96); }
+fn pdbe_set_signature(p, v) { store64(p + 96, v); }
+fn pdbe_signer(p) { return load64(p + 104); }
+fn pdbe_set_signer(p, v) { store64(p + 104, v); }
 
 fn db_entry_new(name, version, source) {
     var p = alloc(PDBE_SZ);
@@ -820,7 +836,106 @@ fn db_entry_new(name, version, source) {
     store64(p + 64, vec_new());
     store64(p + 72, str_from(""));
     store64(p + 80, 0);
+    store64(p + 88, map_new());
+    store64(p + 96, str_from(""));
+    store64(p + 104, str_from(""));
     return p;
+}
+
+# =========================================================================
+# Per-file checksum management
+# =========================================================================
+
+# Record a file's SHA-256 hash in the per-file map
+fn pdbe_set_file_hash(entry, file_path, hash) {
+    map_set(pdbe_file_checksums(entry), str_data(file_path), hash);
+}
+
+# Get a file's expected hash (returns 0 if not found)
+fn pdbe_get_file_hash(entry, file_path) {
+    return map_get(pdbe_file_checksums(entry), str_data(file_path));
+}
+
+# Compute and store hashes for all files in the entry
+fn pdbe_compute_file_hashes(entry) {
+    sha256_global_init();
+    var fls = pdbe_files(entry);
+    var i = 0;
+    while (i < vec_len(fls)) {
+        var fpath = vec_get(fls, i);
+        var hash = hash_file(str_data(fpath));
+        if (hash > 0) {
+            pdbe_set_file_hash(entry, fpath, hash);
+        }
+        i = i + 1;
+    }
+}
+
+# =========================================================================
+# Package signing via sigil Ed25519
+# =========================================================================
+
+# Sign a package entry: hashes all files, signs the concatenated hash,
+# stores signature + key_id on the entry.
+fn pdbe_sign(entry, secret_key, key_id) {
+    ed25519_init();
+    sha256_global_init();
+    # Compute per-file hashes
+    pdbe_compute_file_hashes(entry);
+    # Build canonical string to sign: "name:version:hash1:hash2:..."
+    var sb = str_builder_new();
+    str_builder_add(sb, pdbe_name(entry));
+    str_builder_add_cstr(sb, ":");
+    str_builder_add(sb, pdbe_version(entry));
+    var fls = pdbe_files(entry);
+    var i = 0;
+    while (i < vec_len(fls)) {
+        str_builder_add_cstr(sb, ":");
+        var h = pdbe_get_file_hash(entry, vec_get(fls, i));
+        if (h > 0) { str_builder_add(sb, h); }
+        i = i + 1;
+    }
+    var msg = str_builder_build(sb);
+    # Decode secret key from hex if needed
+    var sig = sign_data(str_data(msg), str_len(msg), secret_key);
+    var sig_hex = hex_encode(sig, 64);
+    pdbe_set_signature(entry, str_from(sig_hex));
+    pdbe_set_signer(entry, key_id);
+    # Also set the legacy single checksum as the content hash
+    var content_hash = hash_data(str_data(msg), str_len(msg));
+    pdbe_set_checksum(entry, content_hash);
+}
+
+# Verify a package entry's signature against a public key.
+# Returns 1 if valid, 0 if invalid or unsigned.
+fn pdbe_verify(entry, public_key) {
+    ed25519_init();
+    sha256_global_init();
+    var sig_hex = pdbe_signature(entry);
+    if (str_len(sig_hex) == 0) { return 0; }
+    # Rebuild canonical message
+    var sb = str_builder_new();
+    str_builder_add(sb, pdbe_name(entry));
+    str_builder_add_cstr(sb, ":");
+    str_builder_add(sb, pdbe_version(entry));
+    var fls = pdbe_files(entry);
+    var i = 0;
+    while (i < vec_len(fls)) {
+        str_builder_add_cstr(sb, ":");
+        var h = pdbe_get_file_hash(entry, vec_get(fls, i));
+        if (h > 0) { str_builder_add(sb, h); }
+        else {
+            # Recompute from disk
+            var fpath = vec_get(fls, i);
+            var disk_hash = hash_file(str_data(fpath));
+            if (disk_hash > 0) { str_builder_add(sb, disk_hash); }
+        }
+        i = i + 1;
+    }
+    var msg = str_builder_build(sb);
+    var sig = hex_decode(str_data(sig_hex), str_len(sig_hex));
+    if (sig == 0) { return 0; }
+    return verify_data(str_data(msg), str_len(msg), sig, public_key);
 }
 
 # =========================================================================
@@ -898,17 +1013,34 @@ fn pkg_db_save(db) {
         str_builder_add_int(sb, pdbe_size(entry));
         str_builder_add_cstr(sb, ",\"held\":");
         str_builder_add_int(sb, pdbe_held(entry));
+        # Signature fields
+        var sig = pdbe_signature(entry);
+        if (str_len(sig) > 0) {
+            str_builder_add_cstr(sb, ",\"signature\":\"");
+            json_escape_str(sb, sig);
+            str_builder_add_cstr(sb, "\",\"signer\":\"");
+            json_escape_str(sb, pdbe_signer(entry));
+            str_builder_add_cstr(sb, "\"");
+        }
         str_builder_add_cstr(sb, "}");
         i = i + 1;
     }
     str_builder_add_cstr(sb, "}}");
     var json = str_builder_build(sb);
+    # Secure temp: random suffix, O_CREAT|O_EXCL|O_WRONLY, mode 0600
     var tmp_sb = str_builder_new();
     str_builder_add(tmp_sb, pdb_path(db));
-    str_builder_add_cstr(tmp_sb, ".tmp");
+    str_builder_add_cstr(tmp_sb, ".tmp.");
+    str_builder_add_int(tmp_sb, syscall(SYS_GETPID));
     var tmp_path = str_builder_build(tmp_sb);
-    file_write_all(str_data(tmp_path), str_data(json), str_len(json));
-    syscall(82, str_data(tmp_path), str_data(pdb_path(db)));
+    var tmp_cstr = str_data(tmp_path);
+    # O_WRONLY(1) | O_CREAT(64) | O_EXCL(128) = 193, mode 0600 = 384
+    var fd = syscall(SYS_OPEN, tmp_cstr, 193, 384);
+    if (fd < 0) { return 0; }
+    syscall(SYS_WRITE, fd, str_data(json), str_len(json));
+    syscall(74, fd);
+    syscall(SYS_CLOSE, fd);
+    syscall(82, tmp_cstr, str_data(pdb_path(db)));
     return 1;
 }
 
@@ -1055,13 +1187,12 @@ fn pkg_db_check_integrity_full(db, pkg_filter) {
                 j = j + 1;
                 continue;
             }
-            # Verify checksum if entry has one
-            var expected = pdbe_checksum(entry);
-            if (str_len(expected) > 0) {
-                var fbuf = alloc(65536);
-                var bytes = file_read_all(str_data(fpath), fbuf, 524288);
-                if (bytes > 0) {
-                    var actual = sha256_hex(fbuf, bytes);
+            # Check per-file hash first, fall back to legacy single checksum
+            var expected = pdbe_get_file_hash(entry, fpath);
+            if (expected == 0) { expected = pdbe_checksum(entry); }
+            if (expected > 0 && str_len(expected) > 0) {
+                var actual = hash_file(str_data(fpath));
+                if (actual > 0) {
                     if (str_eq(actual, expected) == 0) {
                         vec_push(issues, integrity_issue(
                             pdbe_name(entry), ISSUE_CHECKSUM_MISMATCH,
