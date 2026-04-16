@@ -16,10 +16,12 @@ stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "args", "ass
 
 [deps.sigil]
 git = "https://github.com/MacCracken/sigil.git"
+path = "../sigil"
 tag = "2.1.2"
 modules = ["dist/sigil.cyr"]
 
 [deps.nous]
 git = "https://github.com/MacCracken/nous.git"
+path = "../nous"
 tag = "1.0.1"
 modules = ["src/nous.cyr"]
