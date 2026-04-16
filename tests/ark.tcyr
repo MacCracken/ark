@@ -484,6 +484,33 @@ fn test_security() {
     var escaped2 = str_builder_build(sb2);
     assert(str_contains(escaped2, str_from("\\\\")), "escapes backslash");
 
+    # L5: Full integrity check with SHA-256
+    sha256_global_init();
+    var db3 = pkg_db_new();
+    # Package with no file manifest
+    pkg_db_register(db3, make_test_entry(
+        str_from("empty-pkg"), str_from("1.0"), SOURCE_SYSTEM, 100, vec_new()));
+    var iss1 = pkg_db_check_integrity_full(db3, str_from(""));
+    assert_eq(vec_len(iss1), 1, "full: no manifest");
+    assert_eq(iissue_type(vec_get(iss1, 0)), ISSUE_NO_MANIFEST, "issue type no manifest");
+
+    # Package with missing file
+    var fmiss = vec_new();
+    vec_push(fmiss, str_from("/nonexistent/file/xyz"));
+    var miss_entry = make_test_entry(
+        str_from("miss-pkg"), str_from("1.0"), SOURCE_SYSTEM, 100, fmiss);
+    store64(miss_entry + 48, str_from("abc123"));
+    pkg_db_register(db3, miss_entry);
+    var iss2 = pkg_db_check_integrity_full(db3, str_from("miss-pkg"));
+    assert_eq(vec_len(iss2), 1, "full: missing file");
+    assert_eq(iissue_type(vec_get(iss2, 0)), ISSUE_MISSING_FILE, "issue type missing");
+
+    # L4: verify respects package filter
+    var iss_all = pkg_db_check_integrity_full(db3, str_from(""));
+    assert_eq(vec_len(iss_all), 2, "full: all packages = 2 issues");
+    var iss_one = pkg_db_check_integrity_full(db3, str_from("empty-pkg"));
+    assert_eq(vec_len(iss_one), 1, "full: filtered to 1 issue");
+
     # L7: txn_log_recent on empty log
     var elog = txn_log_new();
     var erecent = txn_log_recent(elog, 10);

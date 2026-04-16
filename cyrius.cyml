@@ -12,4 +12,4 @@ output = "ark"
 defines = ["ARK_MAIN"]
 
 [deps]
-stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "args", "assert", "hashmap", "tagged", "toml", "json", "fs", "fnptr", "callback", "bench", "regex"]
+stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "args", "assert", "hashmap", "tagged", "toml", "json", "fs", "fnptr", "callback", "bench", "regex", "sigil"]
