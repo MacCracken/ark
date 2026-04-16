@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "ark — Cyrius port (from 4363 lines of Rust)"
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "5.1.3"
+cyrius = "5.1.7"
 
 [build]
 entry = "src/main.cyr"
@@ -12,4 +12,8 @@ output = "ark"
 defines = ["ARK_MAIN"]
 
 [deps]
-stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "args", "assert", "hashmap", "tagged", "toml", "json", "fs", "fnptr", "callback", "bench", "regex", "sigil"]
+stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "args", "assert", "hashmap", "tagged", "toml", "json", "fs", "fnptr", "callback", "bench", "regex", "freelist", "bigint", "chrono"]
+
+[deps.sigil]
+path = "../sigil"
+modules = ["dist/sigil.cyr"]

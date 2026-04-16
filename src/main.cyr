@@ -553,18 +553,21 @@ fn txn_new(id, user) {
 # Fields: transactions(0) next_id(8) log_path(16)   => 24 bytes
 # =========================================================================
 
-var TLOG_SZ = 24;
+# Fields: transactions(0) next_id(8) log_path(16) index(24) => 32 bytes
+var TLOG_SZ = 32;
 
 fn tlog_txns(p) { return load64(p); }
 fn tlog_next(p) { return load64(p + 8); }
 fn tlog_set_next(p, v) { store64(p + 8, v); }
 fn tlog_path(p) { return load64(p + 16); }
+fn tlog_index(p) { return load64(p + 24); }
 
 fn txn_log_new() {
     var p = alloc(TLOG_SZ);
     store64(p, vec_new());
     store64(p + 8, 0);
     store64(p + 16, str_from(""));
+    store64(p + 24, map_new());
     return p;
 }
 
@@ -573,14 +576,15 @@ fn txn_log_load(path) {
     store64(p, vec_new());
     store64(p + 8, 0);
     store64(p + 16, path);
+    store64(p + 24, map_new());
     var path_cstr = str_data(path);
     var fd = syscall(SYS_OPEN, path_cstr, O_RDONLY, 0);
     if (fd >= 0) {
         syscall(SYS_CLOSE, fd);
-        var buf[65536];
-        var bytes = file_read_all(path_cstr, &buf, 524288);
+        var buf = alloc(65536);
+        var bytes = file_read_all(path_cstr, buf, 524288);
         if (bytes > 0) {
-            var content = str_new(&buf, bytes);
+            var content = str_new(buf, bytes);
             var lines = str_split(content, str_from("\n"));
             var i = 0;
             while (i < vec_len(lines)) {
@@ -606,18 +610,16 @@ fn txn_log_load(path) {
                                 var num = str_to_int(num_str);
                                 if (num >= tlog_next(p)) { tlog_set_next(p, num); }
                             }
-                            var found = 0;
+                            var idx_map = tlog_index(p);
                             var txns = tlog_txns(p);
-                            var j = 0;
-                            while (j < vec_len(txns)) {
-                                var existing = vec_get(txns, j);
-                                if (str_eq(txn_id(existing), txn_id(txn))) {
-                                    vec_set(txns, j, txn);
-                                    found = 1;
-                                }
-                                j = j + 1;
+                            var id_cstr = str_data(txn_id(txn));
+                            var existing_idx = map_get(idx_map, id_cstr);
+                            if (existing_idx > 0) {
+                                vec_set(txns, existing_idx - 1, txn);
+                            } else {
+                                vec_push(txns, txn);
+                                map_set(idx_map, id_cstr, vec_len(txns));
                             }
-                            if (found == 0) { vec_push(txns, txn); }
                         }
                     }
                 }
@@ -663,18 +665,15 @@ fn txn_log_begin(log, user) {
     str_builder_add_int(sb, nxt);
     var id = str_builder_build(sb);
     var txn = txn_new(id, user);
-    vec_push(tlog_txns(log), txn);
+    var txns = tlog_txns(log);
+    vec_push(txns, txn);
+    map_set(tlog_index(log), str_data(id), vec_len(txns));
     return id;
 }
 
 fn txn_log_find(log, txn_id_str) {
-    var txns = tlog_txns(log);
-    var i = 0;
-    while (i < vec_len(txns)) {
-        var t = vec_get(txns, i);
-        if (str_eq(txn_id(t), txn_id_str)) { return i; }
-        i = i + 1;
-    }
+    var idx = map_get(tlog_index(log), str_data(txn_id_str));
+    if (idx > 0) { return idx - 1; }
     return 0 - 1;
 }
 
@@ -853,19 +852,28 @@ fn json_escape_str(sb, s) {
     var n = str_len(s);
     var i = 0;
     while (i < n) {
-        var c = load8(d + i);
-        if (c == 34) { str_builder_add_cstr(sb, "\\\""); }
-        elif (c == 92) { str_builder_add_cstr(sb, "\\\\"); }
-        elif (c == 10) { str_builder_add_cstr(sb, "\\n"); }
-        elif (c == 13) { str_builder_add_cstr(sb, "\\r"); }
-        elif (c == 9) { str_builder_add_cstr(sb, "\\t"); }
-        elif (c < 32) { str_builder_add_cstr(sb, "\\u0000"); }
-        else {
-            var buf[1];
-            store8(&buf, c);
-            str_builder_add(sb, str_new(&buf, 1));
+        # Find run of safe characters (no escaping needed)
+        var run_start = i;
+        while (i < n) {
+            var c = load8(d + i);
+            if (c == 34 || c == 92 || c < 32) { break; }
+            i = i + 1;
         }
-        i = i + 1;
+        # Emit the safe run as a single Str slice (zero-copy)
+        if (i > run_start) {
+            str_builder_add(sb, str_new(d + run_start, i - run_start));
+        }
+        # Handle special character if we stopped on one
+        if (i < n) {
+            var c = load8(d + i);
+            if (c == 34) { str_builder_add_cstr(sb, "\\\""); }
+            elif (c == 92) { str_builder_add_cstr(sb, "\\\\"); }
+            elif (c == 10) { str_builder_add_cstr(sb, "\\n"); }
+            elif (c == 13) { str_builder_add_cstr(sb, "\\r"); }
+            elif (c == 9) { str_builder_add_cstr(sb, "\\t"); }
+            else { str_builder_add_cstr(sb, "\\u0000"); }
+            i = i + 1;
+        }
     }
 }
 
@@ -1050,10 +1058,10 @@ fn pkg_db_check_integrity_full(db, pkg_filter) {
             # Verify checksum if entry has one
             var expected = pdbe_checksum(entry);
             if (str_len(expected) > 0) {
-                var buf[65536];
-                var bytes = file_read_all(str_data(fpath), &buf, 524288);
+                var fbuf = alloc(65536);
+                var bytes = file_read_all(str_data(fpath), fbuf, 524288);
                 if (bytes > 0) {
-                    var actual = sha256_hex(&buf, bytes);
+                    var actual = sha256_hex(fbuf, bytes);
                     if (str_eq(actual, expected) == 0) {
                         vec_push(issues, integrity_issue(
                             pdbe_name(entry), ISSUE_CHECKSUM_MISMATCH,
@@ -1804,10 +1812,10 @@ fn parse_args(ac, av) {
 
 fn load_config_from(path) {
     var config = ark_config_default();
-    var buf[65536];
-    var bytes = file_read_all(str_data(path), &buf, 524288);
+    var buf = alloc(65536);
+    var bytes = file_read_all(str_data(path), buf, 524288);
     if (bytes <= 0) { return config; }
-    var content = str_new(&buf, bytes);
+    var content = str_new(buf, bytes);
     var sections = toml_parse(content);
     if (sections == 0) { return config; }
     var i = 0;
