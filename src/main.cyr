@@ -5,7 +5,8 @@
 #   output.cyr      - ArkOutputLine, ArkOutput, rendering
 #   transaction.cyr - TransactionOp, Transaction, TransactionLog
 #   db.cyr          - PackageDbEntry, PackageDb, integrity, signing
-#   engine.cyr      - NousResolver stub, ArkPackageManager, commands
+#   engine.cyr      - NousResolver, ArkPackageManager, commands
+#   recipe.cyr      - zugot recipe parsing (.cyml)
 #   cli.cyr         - parse_args, config, confirmation, main()
 
 include "src/types.cyr"
@@ -13,6 +14,7 @@ include "src/output.cyr"
 include "src/transaction.cyr"
 include "src/db.cyr"
 include "src/engine.cyr"
+include "src/recipe.cyr"
 include "src/cli.cyr"
 
 #ifdef ARK_MAIN

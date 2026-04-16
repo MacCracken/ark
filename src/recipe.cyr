@@ -1,0 +1,301 @@
+# ark/recipe.cyr - zugot recipe parsing (.cyml format)
+#
+# Recipes are CYML files: TOML header (optionally above ---) with sections:
+#   [package]  - name, version, description, license, groups, release, arch
+#   [source]   - url/github_release, sha256, patches
+#   [depends]  - runtime[], build[]
+#   [build]    - pre_build, configure, make, check, install, post_install
+#   [security] - hardening[], cflags, ldflags
+#   [marketplace] - category, runtime, publisher (optional)
+
+# =========================================================================
+# Recipe struct
+# Fields: name(0) version(8) description(16) license(24) groups(32)
+#         release(40) arch(48) source_url(56) source_sha256(64)
+#         deps_runtime(72) deps_build(80)
+#         build_configure(88) build_make(96) build_check(104)
+#         build_install(112) build_pre(120) build_post(128)
+#         security_hardening(136) security_cflags(144) security_ldflags(152)
+#         mkt_category(160) mkt_runtime(168) mkt_publisher(176)
+#         raw_toml(184)   => 192 bytes
+# =========================================================================
+
+var RECIPE_SZ = 192;
+
+fn recipe_name(p) { return load64(p); }
+fn recipe_version(p) { return load64(p + 8); }
+fn recipe_desc(p) { return load64(p + 16); }
+fn recipe_license(p) { return load64(p + 24); }
+fn recipe_groups(p) { return load64(p + 32); }
+fn recipe_release(p) { return load64(p + 40); }
+fn recipe_arch(p) { return load64(p + 48); }
+fn recipe_source_url(p) { return load64(p + 56); }
+fn recipe_source_sha256(p) { return load64(p + 64); }
+fn recipe_deps_runtime(p) { return load64(p + 72); }
+fn recipe_deps_build(p) { return load64(p + 80); }
+fn recipe_build_configure(p) { return load64(p + 88); }
+fn recipe_build_make(p) { return load64(p + 96); }
+fn recipe_build_check(p) { return load64(p + 104); }
+fn recipe_build_install(p) { return load64(p + 112); }
+fn recipe_build_pre(p) { return load64(p + 120); }
+fn recipe_build_post(p) { return load64(p + 128); }
+fn recipe_hardening(p) { return load64(p + 136); }
+fn recipe_cflags(p) { return load64(p + 144); }
+fn recipe_ldflags(p) { return load64(p + 152); }
+fn recipe_mkt_category(p) { return load64(p + 160); }
+fn recipe_mkt_runtime(p) { return load64(p + 168); }
+fn recipe_mkt_publisher(p) { return load64(p + 176); }
+fn recipe_raw(p) { return load64(p + 184); }
+
+fn recipe_new() {
+    var p = alloc(RECIPE_SZ);
+    var i = 0;
+    while (i < RECIPE_SZ) { store64(p + i, 0); i = i + 8; }
+    # Initialize vec fields
+    store64(p + 32, vec_new());
+    store64(p + 72, vec_new());
+    store64(p + 80, vec_new());
+    store64(p + 136, vec_new());
+    return p;
+}
+
+# =========================================================================
+# TOML array parsing helper
+# Parses "[\"a\", \"b\", \"c\"]" into a vec of Str
+# =========================================================================
+
+fn parse_toml_array(val) {
+    var result = vec_new();
+    if (val == 0) { return result; }
+    var d = str_data(val);
+    var n = str_len(val);
+    if (n < 2) { return result; }
+    # Skip [ and ]
+    if (load8(d) != 91) { return result; }
+    var i = 1;
+    while (i < n) {
+        var c = load8(d + i);
+        if (c == 93) { break; }
+        if (c == 34) {
+            # Start of quoted string
+            i = i + 1;
+            var start = i;
+            while (i < n && load8(d + i) != 34) { i = i + 1; }
+            if (i > start) {
+                vec_push(result, str_new(d + start, i - start));
+            }
+            i = i + 1;
+        } else {
+            i = i + 1;
+        }
+    }
+    return result;
+}
+
+# =========================================================================
+# Recipe parsing from CYML file
+# =========================================================================
+
+fn recipe_parse_file(path) {
+    var buf = alloc(65536);
+    var bytes = file_read_all(str_data(path), buf, 524288);
+    if (bytes <= 0) { return Err(1); }
+    return recipe_parse(buf, bytes);
+}
+
+fn recipe_parse(data, len) {
+    # Use nous's cyml_parse which handles triple-quoted strings,
+    # arrays, and full TOML/CYML syntax
+    var content = str_new(data, len);
+    var sections = cyml_parse(content);
+    if (sections == 0) { return Err(3); }
+
+    var r = recipe_new();
+    store64(r + 184, content);
+
+    var si = 0;
+    while (si < vec_len(sections)) {
+        var section = vec_get(sections, si);
+        var sname = toml_section_name(section);
+        var pairs = toml_section_pairs(section);
+
+        if (sname == 0 || str_len(sname) == 0) {
+            # Top-level or [package] (first unnamed section)
+            var v = toml_get(pairs, "name");
+            if (v > 0) { store64(r, v); }
+            v = toml_get(pairs, "version");
+            if (v > 0) { store64(r + 8, v); }
+            v = toml_get(pairs, "description");
+            if (v > 0) { store64(r + 16, v); }
+            v = toml_get(pairs, "license");
+            if (v > 0) { store64(r + 24, v); }
+            v = toml_get(pairs, "groups");
+            if (v > 0) { store64(r + 32, parse_toml_array(v)); }
+            v = toml_get(pairs, "release");
+            if (v > 0) { store64(r + 40, str_to_int(v)); }
+            v = toml_get(pairs, "arch");
+            if (v > 0) { store64(r + 48, v); }
+        }
+        if (sname > 0 && str_eq(sname, str_from("package"))) {
+            var v = toml_get(pairs, "name");
+            if (v > 0) { store64(r, v); }
+            v = toml_get(pairs, "version");
+            if (v > 0) { store64(r + 8, v); }
+            v = toml_get(pairs, "description");
+            if (v > 0) { store64(r + 16, v); }
+            v = toml_get(pairs, "license");
+            if (v > 0) { store64(r + 24, v); }
+            v = toml_get(pairs, "groups");
+            if (v > 0) { store64(r + 32, parse_toml_array(v)); }
+            v = toml_get(pairs, "release");
+            if (v > 0) { store64(r + 40, str_to_int(v)); }
+            v = toml_get(pairs, "arch");
+            if (v > 0) { store64(r + 48, v); }
+        }
+        if (sname > 0 && str_eq(sname, str_from("source"))) {
+            var v = toml_get(pairs, "url");
+            if (v > 0) { store64(r + 56, v); }
+            v = toml_get(pairs, "github_release");
+            if (v > 0 && load64(r + 56) == 0) { store64(r + 56, v); }
+            v = toml_get(pairs, "sha256");
+            if (v > 0) { store64(r + 64, v); }
+        }
+        if (sname > 0 && str_eq(sname, str_from("depends"))) {
+            var v = toml_get(pairs, "runtime");
+            if (v > 0) { store64(r + 72, parse_toml_array(v)); }
+            v = toml_get(pairs, "build");
+            if (v > 0) { store64(r + 80, parse_toml_array(v)); }
+        }
+        if (sname > 0 && str_eq(sname, str_from("build"))) {
+            var v = toml_get(pairs, "configure");
+            if (v > 0) { store64(r + 88, v); }
+            v = toml_get(pairs, "make");
+            if (v > 0) { store64(r + 96, v); }
+            v = toml_get(pairs, "check");
+            if (v > 0) { store64(r + 104, v); }
+            v = toml_get(pairs, "install");
+            if (v > 0) { store64(r + 112, v); }
+            v = toml_get(pairs, "pre_build");
+            if (v > 0) { store64(r + 120, v); }
+            v = toml_get(pairs, "post_install");
+            if (v > 0) { store64(r + 128, v); }
+        }
+        if (sname > 0 && str_eq(sname, str_from("security"))) {
+            var v = toml_get(pairs, "hardening");
+            if (v > 0) { store64(r + 136, parse_toml_array(v)); }
+            v = toml_get(pairs, "cflags");
+            if (v > 0) { store64(r + 144, v); }
+            v = toml_get(pairs, "ldflags");
+            if (v > 0) { store64(r + 152, v); }
+        }
+        if (sname > 0 && str_eq(sname, str_from("marketplace"))) {
+            var v = toml_get(pairs, "category");
+            if (v > 0) { store64(r + 160, v); }
+            v = toml_get(pairs, "runtime");
+            if (v > 0) { store64(r + 168, v); }
+            v = toml_get(pairs, "publisher");
+            if (v > 0) { store64(r + 176, v); }
+        }
+        si = si + 1;
+    }
+    return Ok(r);
+}
+
+# =========================================================================
+# Recipe validation
+# =========================================================================
+
+fn recipe_validate(r) {
+    var errors = vec_new();
+    if (recipe_name(r) == 0 || str_len(recipe_name(r)) == 0) {
+        vec_push(errors, str_from("missing package name"));
+    }
+    if (recipe_version(r) == 0 || str_len(recipe_version(r)) == 0) {
+        vec_push(errors, str_from("missing version"));
+    }
+    if (recipe_source_url(r) == 0 || str_len(recipe_source_url(r)) == 0) {
+        vec_push(errors, str_from("missing source url"));
+    }
+    if (recipe_build_install(r) == 0 || str_len(recipe_build_install(r)) == 0) {
+        vec_push(errors, str_from("missing build.install"));
+    }
+    # Validate source SHA-256 is present and non-empty
+    var sha = recipe_source_sha256(r);
+    if (sha == 0 || str_len(sha) == 0) {
+        vec_push(errors, str_from("missing source sha256"));
+    }
+    return errors;
+}
+
+# =========================================================================
+# Recipe display
+# =========================================================================
+
+fn recipe_to_output(r) {
+    var output = ark_output_new();
+    var name = recipe_name(r);
+    if (name == 0) { name = str_from("(unnamed)"); }
+    var hsb = str_builder_new();
+    str_builder_add_cstr(hsb, "Recipe: ");
+    str_builder_add(hsb, name);
+    ark_output_add(output, output_line_header(str_builder_build(hsb)));
+
+    if (recipe_version(r) > 0) {
+        ark_output_add(output, output_line_info(
+            str_from("Version"), recipe_version(r)));
+    }
+    if (recipe_desc(r) > 0) {
+        ark_output_add(output, output_line_info(
+            str_from("Description"), recipe_desc(r)));
+    }
+    if (recipe_license(r) > 0) {
+        ark_output_add(output, output_line_info(
+            str_from("License"), recipe_license(r)));
+    }
+    if (recipe_arch(r) > 0) {
+        ark_output_add(output, output_line_info(
+            str_from("Arch"), recipe_arch(r)));
+    }
+    if (recipe_source_url(r) > 0) {
+        ark_output_add(output, output_line_info(
+            str_from("Source"), recipe_source_url(r)));
+    }
+    # Runtime deps
+    var rdeps = recipe_deps_runtime(r);
+    if (vec_len(rdeps) > 0) {
+        ark_output_add(output, output_line_info(
+            str_from("Runtime deps"), str_join(rdeps, str_from(", "))));
+    }
+    # Build deps
+    var bdeps = recipe_deps_build(r);
+    if (vec_len(bdeps) > 0) {
+        ark_output_add(output, output_line_info(
+            str_from("Build deps"), str_join(bdeps, str_from(", "))));
+    }
+    return output;
+}
+
+# =========================================================================
+# Recipe directory scanning
+# =========================================================================
+
+# Scan a directory for .cyml recipe files, return vec of parsed recipes
+fn recipe_scan_dir(dir_path) {
+    var recipes = vec_new();
+    var entries = dir_list(dir_path);
+    var i = 0;
+    while (i < vec_len(entries)) {
+        var fname = vec_get(entries, i);
+        if (str_ends_with(fname, str_from(".cyml"))) {
+            var sb = str_builder_new();
+            str_builder_add(sb, dir_path);
+            str_builder_add_cstr(sb, "/");
+            str_builder_add(sb, fname);
+            var fpath = str_builder_build(sb);
+            var rr = recipe_parse_file(fpath);
+            if (is_ok(rr)) { vec_push(recipes, result_unwrap(rr)); }
+        }
+        i = i + 1;
+    }
+    return recipes;
+}

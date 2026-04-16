@@ -51,11 +51,7 @@ fn parse_source_str(s) {
     return Err(1);
 }
 
-# Strategy aliases: ark uses STRATEGY_*, nous uses STRAT_*
-var STRATEGY_MARKETPLACE_FIRST = STRAT_MARKETPLACE_FIRST;
-var STRATEGY_SYSTEM_FIRST = STRAT_SYSTEM_FIRST;
-var STRATEGY_ONLY_SOURCE = STRAT_ONLY_SOURCE;
-var STRATEGY_SEARCH_ALL = STRAT_SEARCH_ALL;
+# Strategy names: use nous STRAT_* enum values directly
 
 fn strategy_to_str(s) {
     if (s == STRAT_MARKETPLACE_FIRST) { return "MarketplaceFirst"; }
@@ -229,7 +225,7 @@ fn acfg_log_path(p) { return load64(p + 64); }
 
 fn ark_config_default() {
     var p = alloc(ACFG_SZ);
-    store64(p, STRATEGY_SYSTEM_FIRST);
+    store64(p, STRAT_SYSTEM_FIRST);
     store64(p + 8, 1);
     store64(p + 16, 1);
     store64(p + 24, 0);

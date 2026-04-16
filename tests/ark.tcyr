@@ -6,6 +6,7 @@ include "src/output.cyr"
 include "src/transaction.cyr"
 include "src/db.cyr"
 include "src/engine.cyr"
+include "src/recipe.cyr"
 include "src/cli.cyr"
 
 # =========================================================================
@@ -96,7 +97,7 @@ fn test_parse_args() {
 fn test_ark_config() {
     test_group("ark_config");
     var cfg = ark_config_default();
-    assert_eq(acfg_strategy(cfg), STRATEGY_SYSTEM_FIRST, "strategy");
+    assert_eq(acfg_strategy(cfg), STRAT_SYSTEM_FIRST, "strategy");
     assert_eq(acfg_confirm_sys(cfg), 1, "confirm sys");
     assert_eq(acfg_confirm_rm(cfg), 1, "confirm rm");
     assert_eq(acfg_auto_update(cfg), 0, "no auto update");
@@ -567,6 +568,49 @@ fn test_security() {
 # ArkPackageManager integration
 # =========================================================================
 
+# =========================================================================
+# Recipe parsing tests
+# =========================================================================
+
+fn test_recipes() {
+    test_group("recipes");
+
+    # TOML array parsing
+    var ta1 = parse_toml_array(str_from("[\"a\", \"b\", \"c\"]"));
+    assert_eq(vec_len(ta1), 3, "array 3 items");
+    assert(str_eq(vec_get(ta1, 0), str_from("a")), "array[0]");
+    assert(str_eq(vec_get(ta1, 2), str_from("c")), "array[2]");
+    assert_eq(vec_len(parse_toml_array(str_from("[]"))), 0, "empty array");
+    assert_eq(vec_len(parse_toml_array(0)), 0, "null array");
+
+    # Parse inline recipe
+    var ts = str_from("[package]\nname = \"test-pkg\"\nversion = \"1.0\"\n");
+    var rr = recipe_parse(str_data(ts), str_len(ts));
+    assert(is_ok(rr), "parse inline");
+    var r = result_unwrap(rr);
+    assert(str_eq(recipe_name(r), str_from("test-pkg")), "inline name");
+    assert(str_eq(recipe_version(r), str_from("1.0")), "inline version");
+
+    # Validate incomplete recipe
+    var errs = recipe_validate(r);
+    assert(vec_len(errs) > 0, "incomplete has errors");
+
+    # Parse real zugot recipe if available
+    var curl_path = str_from("../zugot/base/curl.cyml");
+    if (file_exists(str_data(curl_path))) {
+        var rr2 = recipe_parse_file(curl_path);
+        assert(is_ok(rr2), "parse curl.cyml");
+        var r2 = result_unwrap(rr2);
+        assert(str_eq(recipe_name(r2), str_from("curl")), "curl name");
+        assert(str_eq(recipe_version(r2), str_from("8.19.0")), "curl ver");
+        assert(vec_len(recipe_deps_runtime(r2)) > 0, "curl runtime deps");
+        assert(vec_len(recipe_deps_build(r2)) > 0, "curl build deps");
+        assert(recipe_build_install(r2) > 0, "curl has install");
+        var errs2 = recipe_validate(r2);
+        assert_eq(vec_len(errs2), 0, "curl validates clean");
+    }
+}
+
 fn test_manager() {
     test_group("ark_mgr");
     var cfg = ark_config_default();
@@ -593,6 +637,7 @@ fn test_main() {
     test_install_plan();
     test_sources_and_groups();
     test_security();
+    test_recipes();
     test_manager();
     return assert_summary();
 }
