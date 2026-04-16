@@ -23,5 +23,20 @@ modules = ["dist/sigil.cyr"]
 [deps.nous]
 git = "https://github.com/MacCracken/nous.git"
 path = "../nous"
-tag = "1.1.0"
-modules = ["src/nous.cyr"]
+tag = "1.1.1"
+modules = [
+    "src/types.cyr",
+    "src/util.cyr",
+    "src/error.cyr",
+    "src/strategy.cyr",
+    "src/source.cyr",
+    "src/command.cyr",
+    "src/sort.cyr",
+    "src/registry.cyr",
+    "src/sysdb.cyr",
+    "src/resolver.cyr",
+    "src/json.cyr",
+    "src/version.cyr",
+    "src/graph.cyr",
+    "src/recipe.cyr",
+]

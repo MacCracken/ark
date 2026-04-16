@@ -1,18 +1,42 @@
 # =========================================================================
-# NousResolver integration (nous.cyr provides the real implementation)
+# NousResolver integration (nous 1.1.1 — multi-module)
 # =========================================================================
+
+var ZUGOT_PATH = "/usr/share/zugot";
 
 fn nous_resolver_new(mkt_dir, cache_dir) {
     var rr = resolver_new(mkt_dir, cache_dir);
     if (is_err_result(rr)) { return 0; }
-    return result_unwrap(rr);
+    var r = payload(rr);
+    # Attach recipe DB for dependency fallback
+    var rdb = recipe_db_load(str_from(ZUGOT_PATH));
+    if (rdb > 0) { resolver_with_recipes(r, rdb); }
+    return r;
 }
 
 fn nous_resolve(r, name) {
     if (r == 0) { return 0; }
     var rr = resolver_resolve(r, name);
-    if (is_err_result(rr)) { return 0; }
+    if (is_err_result(rr)) {
+        # Try suggestion on invalid/not-found
+        var err = payload(rr);
+        if (ne_kind(err) == ERR_INVALID_PACKAGE_NAME) {
+            var known = collect_known_names(r);
+            var sug = suggest_package(ne_msg(err), known);
+            if (sug > 0) {
+                var msg = build_suggestion(ne_msg(err), sug);
+                print(str_data(msg), str_len(msg));
+                print("\n", 1);
+            }
+        }
+        return 0;
+    }
     return payload(rr);
+}
+
+fn nous_resolve_all(r, names) {
+    if (r == 0) { return Err(1); }
+    return resolver_resolve_all_with_recipes(r, names);
 }
 
 fn nous_search(r, query) {
@@ -311,39 +335,56 @@ fn ark_install(mgr, packages, force) {
     if (vec_len(packages) == 0) {
         return ark_result_new(0, str_from("No packages specified"), vec_new(), SOURCE_UNKNOWN);
     }
-    var plan = ark_plan_install(mgr, packages);
-    var steps = iplan_steps(plan);
-    var primary = SOURCE_UNKNOWN;
-    if (vec_len(steps) > 0) {
-        var first_tag = istep_tag(vec_get(steps, 0));
-        if (first_tag == STEP_SYSTEM_INSTALL) { primary = SOURCE_SYSTEM; }
-        if (first_tag == STEP_MARKETPLACE_INSTALL) { primary = SOURCE_MARKETPLACE; }
-        if (first_tag == STEP_FLUTTER_INSTALL) { primary = SOURCE_FLUTTER_APP; }
+    var r = amgr_resolver(mgr);
+
+    # Graph-based transitive resolution (nous 1.1.1)
+    var result = nous_resolve_all(r, packages);
+    if (is_err_result(result)) {
+        var err = payload(result);
+        var kind = ne_kind(err);
+        var msg = nous_error_msg(err);
+        # Suggest closest match for unknown packages
+        if (kind == ERR_INVALID_PACKAGE_NAME) {
+            var known = collect_known_names(r);
+            var sug = suggest_package(ne_msg(err), known);
+            if (sug > 0) { msg = build_suggestion(ne_msg(err), sug); }
+        }
+        return ark_result_new(0, msg, vec_new(), SOURCE_UNKNOWN);
     }
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb, "Install plan (");
-    str_builder_add_int(sb, vec_len(steps));
-    str_builder_add_cstr(sb, " steps): ");
+
+    var plan = payload(result);
+    var pkgs = pl_packages(plan);
+    var order = pl_order(plan);
+    var affected = vec_new();
+
+    # Build install steps from resolved packages in dep order
+    var iplan = install_plan_new();
     var i = 0;
-    while (i < vec_len(steps)) {
-        var st = vec_get(steps, i);
-        if (i > 0) { str_builder_add_cstr(sb, "; "); }
-        var stag = istep_tag(st);
-        if (stag == STEP_SYSTEM_INSTALL) {
-            str_builder_add_cstr(sb, "apt-get install -y ");
-            str_builder_add(sb, istep_pkg(st));
-        }
-        if (stag == STEP_MARKETPLACE_INSTALL) {
-            str_builder_add_cstr(sb, "marketplace install ");
-            str_builder_add(sb, istep_pkg(st));
-        }
-        if (stag == STEP_FLUTTER_INSTALL) {
-            str_builder_add_cstr(sb, "agpkg install ");
-            str_builder_add(sb, istep_pkg(st));
+    while (i < vec_len(pkgs)) {
+        var pkg = vec_get(pkgs, i);
+        var src = rp_src(pkg);
+        var name = rp_name(pkg);
+        var ver = rp_ver(pkg);
+        vec_push(affected, name);
+        if (src == SOURCE_SYSTEM) {
+            vec_push(iplan_steps(iplan), step_system_install(name, ver));
+            iplan_set_root(iplan, 1);
+        } elif (src == SOURCE_MARKETPLACE || src == SOURCE_COMMUNITY) {
+            vec_push(iplan_steps(iplan), step_marketplace_install(name, ver));
+        } elif (src == SOURCE_FLUTTER_APP) {
+            vec_push(iplan_steps(iplan), step_flutter_install(name, ver));
         }
         i = i + 1;
     }
-    return ark_result_new(1, str_builder_build(sb), packages, primary);
+
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "Install plan (");
+    str_builder_add_int(sb, vec_len(affected));
+    str_builder_add_cstr(sb, " packages, deps-first): ");
+    str_builder_add(sb, str_join(order, str_from(", ")));
+    var primary = SOURCE_UNKNOWN;
+    if (vec_len(pkgs) > 0) { primary = rp_src(vec_get(pkgs, 0)); }
+    return ark_result_new(1, str_builder_build(sb), affected, primary);
 }
 
 fn ark_remove(mgr, packages, purge) {
@@ -571,27 +612,19 @@ fn ark_history(mgr, count) {
     return output;
 }
 
-fn ark_plan_install(mgr, packages) {
-    var plan = install_plan_new();
-    var steps = iplan_steps(plan);
-    var i = 0;
-    while (i < vec_len(packages)) {
-        var pkg_name = vec_get(packages, i);
-        vec_push(steps, step_system_install(pkg_name, str_from("")));
-        iplan_set_root(plan, 1);
-        i = i + 1;
-    }
-    return plan;
-}
-
 fn ark_plan_remove(mgr, packages, purge) {
     var plan = install_plan_new();
     var steps = iplan_steps(plan);
+    var r = amgr_resolver(mgr);
     var i = 0;
     while (i < vec_len(packages)) {
-        var pkg_name = vec_get(packages, i);
-        vec_push(steps, step_system_remove(pkg_name, purge));
-        iplan_set_root(plan, 1);
+        var name = vec_get(packages, i);
+        if (r != 0 && resolver_is_mkt(r, name)) {
+            vec_push(steps, step_marketplace_remove(name));
+        } else {
+            vec_push(steps, step_system_remove(name, purge));
+            iplan_set_root(plan, 1);
+        }
         i = i + 1;
     }
     return plan;
