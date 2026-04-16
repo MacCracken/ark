@@ -84,7 +84,8 @@ fn output_line_warning(text) {
 fn ark_output_new() { return vec_new(); }
 fn ark_output_add(out, line) { vec_push(out, line); }
 
-fn ark_output_to_display_string(output) {
+# Unified render: color=0 for plain, color=1 for ANSI
+fn ark_output_render(output, color) {
     var sb = str_builder_new();
     var i = 0;
     var len = vec_len(output);
@@ -92,69 +93,18 @@ fn ark_output_to_display_string(output) {
         var ln = vec_get(output, i);
         var t = oline_tag(ln);
         if (t == LINE_HEADER) {
-            str_builder_add_cstr(sb, "=== ");
-            str_builder_add(sb, oline_text(ln));
-            str_builder_add_cstr(sb, " ===\n");
-        }
-        if (t == LINE_PACKAGE) {
-            str_builder_add_cstr(sb, "  ");
-            str_builder_add(sb, oline_name(ln));
-            str_builder_add_cstr(sb, " (");
-            str_builder_add(sb, oline_version(ln));
-            str_builder_add_cstr(sb, ") [");
-            str_builder_add(sb, source_to_str(oline_source(ln)));
-            str_builder_add_cstr(sb, "] -- ");
-            str_builder_add(sb, oline_desc(ln));
-            str_builder_add_cstr(sb, "\n");
-        }
-        if (t == LINE_INFO) {
-            str_builder_add_cstr(sb, "  ");
-            str_builder_add(sb, oline_key(ln));
-            str_builder_add_cstr(sb, ": ");
-            str_builder_add(sb, oline_value(ln));
-            str_builder_add_cstr(sb, "\n");
-        }
-        if (t == LINE_SEPARATOR) { str_builder_add_cstr(sb, "---\n"); }
-        if (t == LINE_SUCCESS) {
-            str_builder_add_cstr(sb, "OK: ");
-            str_builder_add(sb, oline_text(ln));
-            str_builder_add_cstr(sb, "\n");
-        }
-        if (t == LINE_ERROR) {
-            str_builder_add_cstr(sb, "ERROR: ");
-            str_builder_add(sb, oline_text(ln));
-            str_builder_add_cstr(sb, "\n");
-        }
-        if (t == LINE_WARNING) {
-            str_builder_add_cstr(sb, "WARN: ");
-            str_builder_add(sb, oline_text(ln));
-            str_builder_add_cstr(sb, "\n");
-        }
-        i = i + 1;
-    }
-    return str_builder_build(sb);
-}
-
-fn ark_output_to_colored_string(output) {
-    var sb = str_builder_new();
-    var i = 0;
-    var len = vec_len(output);
-    while (i < len) {
-        var ln = vec_get(output, i);
-        var t = oline_tag(ln);
-        if (t == LINE_HEADER) {
-            str_builder_add_cstr(sb, ANSI_BOLD);
+            if (color) { str_builder_add_cstr(sb, ANSI_BOLD); }
             str_builder_add_cstr(sb, "=== ");
             str_builder_add(sb, oline_text(ln));
             str_builder_add_cstr(sb, " ===");
-            str_builder_add_cstr(sb, ANSI_RESET);
+            if (color) { str_builder_add_cstr(sb, ANSI_RESET); }
             str_builder_add_cstr(sb, "\n");
         }
         if (t == LINE_PACKAGE) {
             str_builder_add_cstr(sb, "  ");
-            str_builder_add_cstr(sb, ANSI_CYAN);
+            if (color) { str_builder_add_cstr(sb, ANSI_CYAN); }
             str_builder_add(sb, oline_name(ln));
-            str_builder_add_cstr(sb, ANSI_RESET);
+            if (color) { str_builder_add_cstr(sb, ANSI_RESET); }
             str_builder_add_cstr(sb, " (");
             str_builder_add(sb, oline_version(ln));
             str_builder_add_cstr(sb, ") [");
@@ -165,33 +115,33 @@ fn ark_output_to_colored_string(output) {
         }
         if (t == LINE_INFO) {
             str_builder_add_cstr(sb, "  ");
-            str_builder_add_cstr(sb, ANSI_BOLD);
+            if (color) { str_builder_add_cstr(sb, ANSI_BOLD); }
             str_builder_add(sb, oline_key(ln));
-            str_builder_add_cstr(sb, ANSI_RESET);
+            if (color) { str_builder_add_cstr(sb, ANSI_RESET); }
             str_builder_add_cstr(sb, ": ");
             str_builder_add(sb, oline_value(ln));
             str_builder_add_cstr(sb, "\n");
         }
         if (t == LINE_SEPARATOR) { str_builder_add_cstr(sb, "---\n"); }
         if (t == LINE_SUCCESS) {
-            str_builder_add_cstr(sb, ANSI_GREEN);
+            if (color) { str_builder_add_cstr(sb, ANSI_GREEN); }
             str_builder_add_cstr(sb, "OK: ");
             str_builder_add(sb, oline_text(ln));
-            str_builder_add_cstr(sb, ANSI_RESET);
+            if (color) { str_builder_add_cstr(sb, ANSI_RESET); }
             str_builder_add_cstr(sb, "\n");
         }
         if (t == LINE_ERROR) {
-            str_builder_add_cstr(sb, ANSI_RED);
+            if (color) { str_builder_add_cstr(sb, ANSI_RED); }
             str_builder_add_cstr(sb, "ERROR: ");
             str_builder_add(sb, oline_text(ln));
-            str_builder_add_cstr(sb, ANSI_RESET);
+            if (color) { str_builder_add_cstr(sb, ANSI_RESET); }
             str_builder_add_cstr(sb, "\n");
         }
         if (t == LINE_WARNING) {
-            str_builder_add_cstr(sb, ANSI_YELLOW);
+            if (color) { str_builder_add_cstr(sb, ANSI_YELLOW); }
             str_builder_add_cstr(sb, "WARN: ");
             str_builder_add(sb, oline_text(ln));
-            str_builder_add_cstr(sb, ANSI_RESET);
+            if (color) { str_builder_add_cstr(sb, ANSI_RESET); }
             str_builder_add_cstr(sb, "\n");
         }
         i = i + 1;
@@ -199,10 +149,9 @@ fn ark_output_to_colored_string(output) {
     return str_builder_build(sb);
 }
 
-fn ark_output_render(output, color) {
-    if (color) { return ark_output_to_colored_string(output); }
-    return ark_output_to_display_string(output);
-}
+# Convenience wrappers
+fn ark_output_to_display_string(output) { return ark_output_render(output, 0); }
+fn ark_output_to_colored_string(output) { return ark_output_render(output, 1); }
 
 # =========================================================================
 # Progress spinner
@@ -233,43 +182,4 @@ fn spinner_show(frame, message) {
 fn spinner_clear() {
     print("\r", 1);
     print("                                                  \r", 51);
-}
-
-# =========================================================================
-# Dependency conflict display
-# =========================================================================
-
-fn format_conflict(pkg_name, installed_ver, requested_ver, source) {
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb, "  ");
-    str_builder_add(sb, pkg_name);
-    str_builder_add_cstr(sb, ": installed ");
-    str_builder_add(sb, installed_ver);
-    str_builder_add_cstr(sb, ", requested ");
-    str_builder_add(sb, requested_ver);
-    str_builder_add_cstr(sb, " [");
-    str_builder_add(sb, source_to_str(source));
-    str_builder_add_cstr(sb, "]");
-    return str_builder_build(sb);
-}
-
-fn show_conflicts(conflicts) {
-    if (vec_len(conflicts) == 0) { return 0; }
-    println("Dependency conflicts detected:");
-    var i = 0;
-    while (i < vec_len(conflicts)) {
-        var c = vec_get(conflicts, i);
-        print(str_data(c), str_len(c));
-        print("\n", 1);
-        i = i + 1;
-    }
-    println("");
-    println("Options:");
-    println("  1) Force install (override conflicts)");
-    println("  2) Cancel");
-    print("Choose [1/2]: ", 14);
-    var buf[4];
-    var n = syscall(SYS_READ, STDIN, &buf, 32);
-    if (n > 0 && load8(&buf) == 49) { return 1; }
-    return 0;
 }

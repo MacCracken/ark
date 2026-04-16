@@ -37,16 +37,6 @@ fn nous_check_updates(r) {
     return payload(rr);
 }
 
-fn nous_is_marketplace_package(r, name) {
-    if (r == 0) { return 0; }
-    return resolver_is_mkt(r, name);
-}
-
-fn nous_is_system_package(r, name) {
-    if (r == 0) { return 0; }
-    return resolver_is_sys(r, name);
-}
-
 # =========================================================================
 # Group meta-package mappings
 # =========================================================================
@@ -76,71 +66,6 @@ fn validate_pkg_name(name) {
     if (str_contains(name, str_from(".."))) { return 0; }
     if (str_contains(name, str_from("/"))) { return 0; }
     return 1;
-}
-
-# =========================================================================
-# Typosquatting detection (Levenshtein distance)
-# =========================================================================
-
-fn levenshtein(a, b) {
-    var al = str_len(a);
-    var bl = str_len(b);
-    var ad = str_data(a);
-    var bd = str_data(b);
-    if (al == 0) { return bl; }
-    if (bl == 0) { return al; }
-    # Use single-row DP: prev row in alloc'd array
-    var row = alloc((bl + 1) * 8);
-    var j = 0;
-    while (j <= bl) { store64(row + j * 8, j); j = j + 1; }
-    var i = 0;
-    while (i < al) {
-        var prev = i;
-        j = 0;
-        while (j < bl) {
-            var cost = 0;
-            if (load8(ad + i) != load8(bd + j)) { cost = 1; }
-            var ins = load64(row + (j + 1) * 8) + 1;
-            var del = load64(row + j * 8) + 1;
-            if (j > 0) { del = load64(row + j * 8) + 1; }
-            var sub = prev + cost;
-            var best = ins;
-            if (del < best) { best = del; }
-            if (sub < best) { best = sub; }
-            prev = load64(row + (j + 1) * 8);
-            store64(row + (j + 1) * 8, best);
-            j = j + 1;
-        }
-        store64(row, i + 1);
-        i = i + 1;
-    }
-    return load64(row + bl * 8);
-}
-
-# Check if a package name is suspiciously close to known popular packages.
-# Returns a vec of (name, distance) pairs for close matches, empty if clean.
-fn check_typosquat(name, known_packages) {
-    var warnings = vec_new();
-    var threshold = 2;
-    var nl = str_len(name);
-    if (nl > 6) { threshold = 3; }
-    var i = 0;
-    while (i < vec_len(known_packages)) {
-        var known = vec_get(known_packages, i);
-        if (str_eq(name, known) == 0) {
-            var dist = levenshtein(name, known);
-            if (dist > 0 && dist <= threshold) {
-                var sb = str_builder_new();
-                str_builder_add(sb, known);
-                str_builder_add_cstr(sb, " (distance: ");
-                str_builder_add_int(sb, dist);
-                str_builder_add_cstr(sb, ")");
-                vec_push(warnings, str_builder_build(sb));
-            }
-        }
-        i = i + 1;
-    }
-    return warnings;
 }
 
 # =========================================================================
@@ -672,6 +597,20 @@ fn ark_plan_remove(mgr, packages, purge) {
     return plan;
 }
 
+fn fmt_step_ver(sb, ver) {
+    if (str_len(ver) > 0) {
+        str_builder_add_cstr(sb, " (");
+        str_builder_add(sb, ver);
+        str_builder_add_cstr(sb, ")");
+    } else { str_builder_add_cstr(sb, " (latest)"); }
+}
+
+fn fmt_step_cmd(sb, cmd, st) {
+    str_builder_add_cstr(sb, cmd);
+    str_builder_add(sb, istep_pkg(st));
+    fmt_step_ver(sb, istep_ver(st));
+}
+
 fn ark_format_plan(plan) {
     var output = ark_output_new();
     ark_output_add(output, output_line_header(str_from("Execution plan")));
@@ -687,42 +626,18 @@ fn ark_format_plan(plan) {
         str_builder_add_int(sb, i + 1);
         str_builder_add_cstr(sb, ". ");
         var stag = istep_tag(st);
-        if (stag == STEP_SYSTEM_INSTALL) {
-            str_builder_add_cstr(sb, "apt-get install ");
-            str_builder_add(sb, istep_pkg(st));
-            if (str_len(istep_ver(st)) > 0) {
-                str_builder_add_cstr(sb, " (");
-                str_builder_add(sb, istep_ver(st));
-                str_builder_add_cstr(sb, ")");
-            } else { str_builder_add_cstr(sb, " (latest)"); }
-        }
+        if (stag == STEP_SYSTEM_INSTALL) { fmt_step_cmd(sb, "apt-get install ", st); }
         if (stag == STEP_SYSTEM_REMOVE) {
             if (istep_purge(st)) { str_builder_add_cstr(sb, "apt-get purge "); }
             else { str_builder_add_cstr(sb, "apt-get remove "); }
             str_builder_add(sb, istep_pkg(st));
         }
-        if (stag == STEP_MARKETPLACE_INSTALL) {
-            str_builder_add_cstr(sb, "marketplace install ");
-            str_builder_add(sb, istep_pkg(st));
-            if (str_len(istep_ver(st)) > 0) {
-                str_builder_add_cstr(sb, " (");
-                str_builder_add(sb, istep_ver(st));
-                str_builder_add_cstr(sb, ")");
-            } else { str_builder_add_cstr(sb, " (latest)"); }
-        }
+        if (stag == STEP_MARKETPLACE_INSTALL) { fmt_step_cmd(sb, "marketplace install ", st); }
         if (stag == STEP_MARKETPLACE_REMOVE) {
             str_builder_add_cstr(sb, "marketplace remove ");
             str_builder_add(sb, istep_pkg(st));
         }
-        if (stag == STEP_FLUTTER_INSTALL) {
-            str_builder_add_cstr(sb, "agpkg install ");
-            str_builder_add(sb, istep_pkg(st));
-            if (str_len(istep_ver(st)) > 0) {
-                str_builder_add_cstr(sb, " (");
-                str_builder_add(sb, istep_ver(st));
-                str_builder_add_cstr(sb, ")");
-            } else { str_builder_add_cstr(sb, " (latest)"); }
-        }
+        if (stag == STEP_FLUTTER_INSTALL) { fmt_step_cmd(sb, "agpkg install ", st); }
         if (stag == STEP_FLUTTER_REMOVE) {
             str_builder_add_cstr(sb, "agpkg remove ");
             str_builder_add(sb, istep_pkg(st));

@@ -12,7 +12,7 @@ output = "ark"
 defines = ["ARK_MAIN"]
 
 [deps]
-stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "args", "assert", "hashmap", "tagged", "toml", "json", "fs", "fnptr", "callback", "bench", "regex", "freelist", "bigint", "chrono", "process"]
+stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "args", "assert", "hashmap", "tagged", "toml", "json", "fs", "freelist", "bigint", "chrono", "process"]
 
 [deps.sigil]
 git = "https://github.com/MacCracken/sigil.git"
@@ -23,5 +23,5 @@ modules = ["dist/sigil.cyr"]
 [deps.nous]
 git = "https://github.com/MacCracken/nous.git"
 path = "../nous"
-tag = "1.0.1"
+tag = "1.1.0"
 modules = ["src/nous.cyr"]
