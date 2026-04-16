@@ -35,10 +35,19 @@ jobs:
       - name: Resolve dependencies
         run: cyrius deps
 
+      - name: Lint
+        run: cyrius lint src/main.cyr
+
       - name: Build
         run: |
           mkdir -p build
-          cyrius build src/main.cyr build/${{ github.event.repository.name }}
+          CYRIUS_DCE=1 cyrius build -D ARK_MAIN src/main.cyr build/ark
+
+      - name: Test
+        run: cyrius test tests/ark.tcyr
+
+      - name: Bench
+        run: cyrius bench tests/ark.bcyr
 
   docs:
     name: Documentation
@@ -47,6 +56,6 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check required docs
         run: |
-          for doc in README.md CHANGELOG.md VERSION LICENSE cyrius.toml; do
+          for doc in README.md CHANGELOG.md VERSION LICENSE cyrius.cyml; do
             test -f "$doc" && echo "OK: $doc" || { echo "MISSING: $doc"; exit 1; }
           done

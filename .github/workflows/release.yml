@@ -43,7 +43,7 @@ jobs:
         run: |
           cyrius deps
           mkdir -p build
-          cyrius build src/main.cyr build/${{ github.event.repository.name }}
+          CYRIUS_DCE=1 cyrius build -D ARK_MAIN src/main.cyr build/ark
 
       - name: Create release
         uses: softprops/action-gh-release@v2
