@@ -12,8 +12,12 @@ output = "ark"
 defines = ["ARK_MAIN"]
 
 [deps]
-stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "args", "assert", "hashmap", "tagged", "toml", "json", "fs", "fnptr", "callback", "bench", "regex", "freelist", "bigint", "chrono"]
+stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "args", "assert", "hashmap", "tagged", "toml", "json", "fs", "fnptr", "callback", "bench", "regex", "freelist", "bigint", "chrono", "process"]
 
 [deps.sigil]
 path = "../sigil"
 modules = ["dist/sigil.cyr"]
+
+[deps.nous]
+path = "../nous"
+modules = ["src/nous.cyr"]

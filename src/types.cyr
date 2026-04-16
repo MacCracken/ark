@@ -30,23 +30,14 @@ var ANSI_YELLOW = "\x1b[33m";
 var ANSI_CYAN = "\x1b[36m";
 
 # =========================================================================
-# PackageSource enum (from nous - stubbed here until nous is ported)
+# PackageSource + ResolutionStrategy: provided by nous
+# Aliases for ark's naming convention
 # =========================================================================
 
-enum PackageSource {
-    SOURCE_SYSTEM = 0;
-    SOURCE_MARKETPLACE = 1;
-    SOURCE_FLUTTER_APP = 2;
-    SOURCE_COMMUNITY = 3;
-    SOURCE_UNKNOWN = 4;
-}
-
-fn source_to_str(src) {
-    if (src == SOURCE_SYSTEM) { return "system"; }
-    if (src == SOURCE_MARKETPLACE) { return "marketplace"; }
-    if (src == SOURCE_FLUTTER_APP) { return "flutter-app"; }
-    if (src == SOURCE_COMMUNITY) { return "community"; }
-    return "unknown";
+# source_to_str(src) is provided by nous (returns Str)
+# source_to_cstr: ark wrapper returning cstr for output formatting
+fn source_to_cstr(src) {
+    return str_data(source_to_str(src));
 }
 
 fn parse_source_str(s) {
@@ -60,22 +51,17 @@ fn parse_source_str(s) {
     return Err(1);
 }
 
-# =========================================================================
-# ResolutionStrategy enum (from nous - stubbed)
-# =========================================================================
-
-enum ResolutionStrategy {
-    STRATEGY_MARKETPLACE_FIRST = 0;
-    STRATEGY_SYSTEM_FIRST = 1;
-    STRATEGY_ONLY_SOURCE = 2;
-    STRATEGY_SEARCH_ALL = 3;
-}
+# Strategy aliases: ark uses STRATEGY_*, nous uses STRAT_*
+var STRATEGY_MARKETPLACE_FIRST = STRAT_MARKETPLACE_FIRST;
+var STRATEGY_SYSTEM_FIRST = STRAT_SYSTEM_FIRST;
+var STRATEGY_ONLY_SOURCE = STRAT_ONLY_SOURCE;
+var STRATEGY_SEARCH_ALL = STRAT_SEARCH_ALL;
 
 fn strategy_to_str(s) {
-    if (s == STRATEGY_MARKETPLACE_FIRST) { return "MarketplaceFirst"; }
-    if (s == STRATEGY_SYSTEM_FIRST) { return "SystemFirst"; }
-    if (s == STRATEGY_ONLY_SOURCE) { return "OnlySource"; }
-    if (s == STRATEGY_SEARCH_ALL) { return "SearchAll"; }
+    if (s == STRAT_MARKETPLACE_FIRST) { return "MarketplaceFirst"; }
+    if (s == STRAT_SYSTEM_FIRST) { return "SystemFirst"; }
+    if (s == STRAT_ONLY_SOURCE) { return "OnlySource"; }
+    if (s == STRAT_SEARCH_ALL) { return "SearchAll"; }
     return "Unknown";
 }
 

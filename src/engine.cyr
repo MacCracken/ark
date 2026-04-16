@@ -1,24 +1,51 @@
 # =========================================================================
-# NousResolver stub
-# Fields: marketplace_dir(0) cache_dir(8) strategy(16) => 24 bytes
+# NousResolver integration (nous.cyr provides the real implementation)
 # =========================================================================
 
-var NRES_SZ = 24;
-
 fn nous_resolver_new(mkt_dir, cache_dir) {
-    var p = alloc(NRES_SZ);
-    store64(p, mkt_dir);
-    store64(p + 8, cache_dir);
-    store64(p + 16, STRATEGY_SYSTEM_FIRST);
-    return p;
+    var rr = resolver_new(mkt_dir, cache_dir);
+    if (is_err_result(rr)) { return 0; }
+    return result_unwrap(rr);
 }
 
-fn nous_resolve(r, name) { return 0; }
-fn nous_search(r, query) { return vec_new(); }
-fn nous_list_installed(r) { return vec_new(); }
-fn nous_check_updates(r) { return vec_new(); }
-fn nous_is_marketplace_package(r, name) { return 0; }
-fn nous_is_system_package(r, name) { return 0; }
+fn nous_resolve(r, name) {
+    if (r == 0) { return 0; }
+    var rr = resolver_resolve(r, name);
+    if (is_err_result(rr)) { return 0; }
+    return payload(rr);
+}
+
+fn nous_search(r, query) {
+    if (r == 0) { return vec_new(); }
+    var rr = resolver_search(r, query);
+    if (is_err_result(rr)) { return vec_new(); }
+    var sr = payload(rr);
+    return sr_results(sr);
+}
+
+fn nous_list_installed(r) {
+    if (r == 0) { return vec_new(); }
+    var rr = resolver_list(r);
+    if (is_err_result(rr)) { return vec_new(); }
+    return payload(rr);
+}
+
+fn nous_check_updates(r) {
+    if (r == 0) { return vec_new(); }
+    var rr = resolver_updates(r);
+    if (is_err_result(rr)) { return vec_new(); }
+    return payload(rr);
+}
+
+fn nous_is_marketplace_package(r, name) {
+    if (r == 0) { return 0; }
+    return resolver_is_mkt(r, name);
+}
+
+fn nous_is_system_package(r, name) {
+    if (r == 0) { return 0; }
+    return resolver_is_sys(r, name);
+}
 
 # =========================================================================
 # Group meta-package mappings
@@ -77,7 +104,10 @@ fn ark_mgr_new(config) {
     var p = alloc(AMGR_SZ);
     store64(p, config);
     var r = nous_resolver_new(acfg_mkt_dir(config), acfg_cache_dir(config));
-    store64(r + 16, acfg_strategy(config));
+    if (r != 0) {
+        var strat = strategy_new(acfg_strategy(config), 0);
+        resolver_with_strategy(r, strat);
+    }
     store64(p + 8, r);
     store64(p + 16, pkg_db_load(acfg_db_path(config)));
     store64(p + 24, txn_log_load(acfg_log_path(config)));

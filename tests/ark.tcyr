@@ -421,10 +421,10 @@ fn test_install_plan() {
 fn test_sources_and_groups() {
     test_group("sources_groups");
 
-    assert(streq(source_to_str(SOURCE_SYSTEM), "system"), "system str");
-    assert(streq(source_to_str(SOURCE_MARKETPLACE), "marketplace"), "mkt str");
-    assert(streq(source_to_str(SOURCE_FLUTTER_APP), "flutter-app"), "flutter str");
-    assert(streq(source_to_str(SOURCE_UNKNOWN), "unknown"), "unknown str");
+    assert(str_eq(source_to_str(SOURCE_SYSTEM), str_from("system")), "system str");
+    assert(str_eq(source_to_str(SOURCE_MARKETPLACE), str_from("marketplace")), "mkt str");
+    assert(str_eq(source_to_str(SOURCE_FLUTTER_APP), str_from("flutter-app")), "flutter str");
+    assert(str_eq(source_to_str(SOURCE_UNKNOWN), str_from("unknown")), "unknown str");
 
     assert(streq(group_meta_package("desktop"), "agnos-desktop"), "desktop grp");
     assert(streq(group_meta_package("ai"), "agnos-ai"), "ai grp");
