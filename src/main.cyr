@@ -592,6 +592,8 @@ fn txn_log_load(path) {
                         var user_val = json_get(pairs, "user");
                         var status_val = json_get(pairs, "status");
                         if (id_val > 0) {
+                            if (user_val == 0) { user_val = str_from("unknown"); }
+                            if (status_val == 0) { status_val = str_from(""); }
                             var txn = txn_new(id_val, user_val);
                             if (streq(str_data(status_val), "Committed")) {
                                 txn_set_status(txn, TXN_COMMITTED);
@@ -630,7 +632,7 @@ fn txn_log_persist(log, txn) {
     if (str_len(tlog_path(log)) == 0) { return 0; }
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "{\"id\":\"");
-    str_builder_add(sb, txn_id(txn));
+    json_escape_str(sb, txn_id(txn));
     str_builder_add_cstr(sb, "\",\"status\":\"");
     var st = txn_status(txn);
     if (st == TXN_IN_PROGRESS) { str_builder_add_cstr(sb, "InProgress"); }
@@ -638,16 +640,13 @@ fn txn_log_persist(log, txn) {
     if (st == TXN_ROLLED_BACK) { str_builder_add_cstr(sb, "RolledBack"); }
     if (st == TXN_FAILED) { str_builder_add_cstr(sb, "Failed"); }
     str_builder_add_cstr(sb, "\",\"user\":\"");
-    str_builder_add(sb, txn_user(txn));
+    json_escape_str(sb, txn_user(txn));
     str_builder_add_cstr(sb, "\",\"ops\":");
     str_builder_add_int(sb, vec_len(txn_ops(txn)));
     str_builder_add_cstr(sb, "}\n");
     var json_line = str_builder_build(sb);
-    var fd = syscall(SYS_OPEN, str_data(tlog_path(log)), O_WRONLY | O_CREAT | O_APPEND, 420);
-    if (fd >= 0) {
-        syscall(SYS_WRITE, fd, str_data(json_line), str_len(json_line));
-        syscall(SYS_CLOSE, fd);
-    }
+    # Use locked append to prevent concurrent write interleaving (H3)
+    file_append_locked(str_data(tlog_path(log)), str_data(json_line), str_len(json_line));
     return 1;
 }
 
@@ -774,11 +773,13 @@ fn txn_log_recent(log, count) {
     var result = vec_new();
     var txns = tlog_txns(log);
     var total = vec_len(txns);
+    if (total == 0) { return result; }
     var i = total - 1;
     var added = 0;
-    while (i >= 0 && added < count) {
+    while (added < count && i >= 0) {
         vec_push(result, vec_get(txns, i));
         added = added + 1;
+        if (i == 0) { return result; }
         i = i - 1;
     }
     return result;
@@ -847,10 +848,52 @@ fn pkg_db_load(path) {
     return p;
 }
 
+fn json_escape_str(sb, s) {
+    var d = str_data(s);
+    var n = str_len(s);
+    var i = 0;
+    while (i < n) {
+        var c = load8(d + i);
+        if (c == 34) { str_builder_add_cstr(sb, "\\\""); }
+        elif (c == 92) { str_builder_add_cstr(sb, "\\\\"); }
+        elif (c == 10) { str_builder_add_cstr(sb, "\\n"); }
+        elif (c == 13) { str_builder_add_cstr(sb, "\\r"); }
+        elif (c == 9) { str_builder_add_cstr(sb, "\\t"); }
+        elif (c < 32) { str_builder_add_cstr(sb, "\\u0000"); }
+        else {
+            var buf[1];
+            store8(&buf, c);
+            str_builder_add(sb, str_new(&buf, 1));
+        }
+        i = i + 1;
+    }
+}
+
 fn pkg_db_save(db) {
     if (str_len(pdb_path(db)) == 0) { return 1; }
     var sb = str_builder_new();
-    str_builder_add_cstr(sb, "{\"packages\":{}}");
+    str_builder_add_cstr(sb, "{\"packages\":{");
+    var all = pkg_db_list(db);
+    var i = 0;
+    while (i < vec_len(all)) {
+        var entry = vec_get(all, i);
+        if (i > 0) { str_builder_add_cstr(sb, ","); }
+        str_builder_add_cstr(sb, "\"");
+        json_escape_str(sb, pdbe_name(entry));
+        str_builder_add_cstr(sb, "\":{\"name\":\"");
+        json_escape_str(sb, pdbe_name(entry));
+        str_builder_add_cstr(sb, "\",\"version\":\"");
+        json_escape_str(sb, pdbe_version(entry));
+        str_builder_add_cstr(sb, "\",\"source\":");
+        str_builder_add_int(sb, pdbe_source(entry));
+        str_builder_add_cstr(sb, ",\"size_bytes\":");
+        str_builder_add_int(sb, pdbe_size(entry));
+        str_builder_add_cstr(sb, ",\"held\":");
+        str_builder_add_int(sb, pdbe_held(entry));
+        str_builder_add_cstr(sb, "}");
+        i = i + 1;
+    }
+    str_builder_add_cstr(sb, "}}");
     var json = str_builder_build(sb);
     var tmp_sb = str_builder_new();
     str_builder_add(tmp_sb, pdb_path(db));
@@ -867,7 +910,7 @@ fn pkg_db_register(db, entry) {
 
 fn pkg_db_unregister(db, name) {
     var entry = map_get(pdb_map(db), str_data(name));
-    if (entry > 0) { map_set(pdb_map(db), str_data(name), 0); return entry; }
+    if (entry > 0) { map_delete(pdb_map(db), str_data(name)); return entry; }
     return 0;
 }
 
@@ -893,13 +936,39 @@ fn pkg_db_list(db) {
     return result;
 }
 
+fn to_lower_byte(c) {
+    if (c >= 65 && c <= 90) { return c + 32; }
+    return c;
+}
+
+fn str_contains_icase(haystack, needle) {
+    var hd = str_data(haystack);
+    var hn = str_len(haystack);
+    var nd = str_data(needle);
+    var nn = str_len(needle);
+    if (nn == 0) { return 1; }
+    if (nn > hn) { return 0; }
+    var i = 0;
+    while (i <= hn - nn) {
+        var j = 0;
+        while (j < nn) {
+            if (to_lower_byte(load8(hd + i + j)) != to_lower_byte(load8(nd + j))) {
+                j = nn + 1;
+            } else { j = j + 1; }
+        }
+        if (j == nn) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
 fn pkg_db_search(db, query) {
     var result = vec_new();
     var all = pkg_db_list(db);
     var i = 0;
     while (i < vec_len(all)) {
         var entry = vec_get(all, i);
-        if (str_contains(pdbe_name(entry), query)) { vec_push(result, entry); }
+        if (str_contains_icase(pdbe_name(entry), query)) { vec_push(result, entry); }
         i = i + 1;
     }
     return result;
@@ -1052,6 +1121,33 @@ fn nous_is_system_package(r, name) { return 0; }
 # =========================================================================
 # Group meta-package mappings
 # =========================================================================
+
+# Validate package name: [a-zA-Z0-9][a-zA-Z0-9._-]*, max 128 chars
+fn validate_pkg_name(name) {
+    var d = str_data(name);
+    var n = str_len(name);
+    if (n == 0 || n > 128) { return 0; }
+    # First char must be alphanumeric
+    var c = load8(d);
+    if (c < 48) { return 0; }
+    if (c > 57 && c < 65) { return 0; }
+    if (c > 90 && c < 97) { return 0; }
+    if (c > 122) { return 0; }
+    var i = 1;
+    while (i < n) {
+        c = load8(d + i);
+        # Allow: 0-9 A-Z a-z . _ -
+        if (c == 46 || c == 95 || c == 45) { i = i + 1; }
+        elif (c >= 48 && c <= 57) { i = i + 1; }
+        elif (c >= 65 && c <= 90) { i = i + 1; }
+        elif (c >= 97 && c <= 122) { i = i + 1; }
+        else { return 0; }
+    }
+    # Reject path traversal
+    if (str_contains(name, str_from(".."))) { return 0; }
+    if (str_contains(name, str_from("/"))) { return 0; }
+    return 1;
+}
 
 fn group_meta_package(group) {
     if (streq(group, "desktop")) { return "agnos-desktop"; }
@@ -1504,7 +1600,7 @@ fn parse_args(ac, av) {
     var command = argv(cmd_idx);
     if (streq(command, "install")) {
         var c = ark_cmd_new(CMD_INSTALL);
-        var i = 2;
+        var i = cmd_idx + 1;
         while (i < ac) {
             var arg = argv(i);
             if (streq(arg, "--force") || streq(arg, "-f")) { acmd_set_force(c, 1); }
@@ -1525,7 +1621,7 @@ fn parse_args(ac, av) {
     }
     if (streq(command, "remove") || streq(command, "uninstall")) {
         var c = ark_cmd_new(CMD_REMOVE);
-        var i = 2;
+        var i = cmd_idx + 1;
         while (i < ac) {
             var arg = argv(i);
             if (streq(arg, "--purge")) { acmd_set_purge(c, 1); }
@@ -1539,7 +1635,7 @@ fn parse_args(ac, av) {
     if (streq(command, "search")) {
         var c = ark_cmd_new(CMD_SEARCH);
         var parts = vec_new();
-        var i = 2;
+        var i = cmd_idx + 1;
         while (i < ac) {
             var arg = argv(i);
             if (streq(arg, "--source") || streq(arg, "-s")) {
@@ -1558,7 +1654,7 @@ fn parse_args(ac, av) {
     }
     if (streq(command, "list") || streq(command, "ls")) {
         var c = ark_cmd_new(CMD_LIST);
-        var i = 2;
+        var i = cmd_idx + 1;
         while (i < ac) {
             var arg = argv(i);
             if (streq(arg, "--marketplace") || streq(arg, "--market")) { acmd_set_source(c, SOURCE_MARKETPLACE); }
@@ -1570,15 +1666,15 @@ fn parse_args(ac, av) {
         return c;
     }
     if (streq(command, "info") || streq(command, "show")) {
-        if (ac < 3) { println("info requires a package name"); return 0; }
+        if (ac < cmd_idx + 2) { println("info requires a package name"); return 0; }
         var c = ark_cmd_new(CMD_INFO);
-        acmd_set_package(c, str_from(argv(2)));
+        acmd_set_package(c, str_from(argv(cmd_idx + 1)));
         return c;
     }
     if (streq(command, "update")) { return ark_cmd_new(CMD_UPDATE); }
     if (streq(command, "upgrade")) {
         var c = ark_cmd_new(CMD_UPGRADE);
-        var i = 2;
+        var i = cmd_idx + 1;
         while (i < ac) {
             var arg = argv(i);
             if (load8(arg) != 45) { vec_push(acmd_packages(c), str_from(arg)); }
@@ -1589,7 +1685,7 @@ fn parse_args(ac, av) {
     if (streq(command, "status")) { return ark_cmd_new(CMD_STATUS); }
     if (streq(command, "hold")) {
         var c = ark_cmd_new(CMD_HOLD);
-        var i = 2;
+        var i = cmd_idx + 1;
         while (i < ac) {
             if (load8(argv(i)) != 45) { vec_push(acmd_packages(c), str_from(argv(i))); }
             i = i + 1;
@@ -1599,7 +1695,7 @@ fn parse_args(ac, av) {
     }
     if (streq(command, "unhold")) {
         var c = ark_cmd_new(CMD_UNHOLD);
-        var i = 2;
+        var i = cmd_idx + 1;
         while (i < ac) {
             if (load8(argv(i)) != 45) { vec_push(acmd_packages(c), str_from(argv(i))); }
             i = i + 1;
@@ -1609,15 +1705,18 @@ fn parse_args(ac, av) {
     }
     if (streq(command, "verify")) {
         var c = ark_cmd_new(CMD_VERIFY);
-        if (ac >= 3 && load8(argv(2)) != 45) { acmd_set_package(c, str_from(argv(2))); }
+        var vi = cmd_idx + 1;
+        if (ac > vi && load8(argv(vi)) != 45) { acmd_set_package(c, str_from(argv(vi))); }
         return c;
     }
     if (streq(command, "history")) {
         var c = ark_cmd_new(CMD_HISTORY);
-        if (ac >= 3) { acmd_set_count(c, str_to_int(str_from(argv(2)))); }
+        var hi = cmd_idx + 1;
+        if (ac > hi) { acmd_set_count(c, str_to_int(str_from(argv(hi)))); }
         return c;
     }
-    println("Unknown command. Available: install, remove, search, list, info, update, upgrade, status, hold, unhold, verify, history");
+    println("Unknown command. Available: install, remove, search, list,");
+    println("  info, update, upgrade, status, hold, unhold, verify, history");
     return 0;
 }
 

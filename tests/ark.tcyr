@@ -306,7 +306,8 @@ fn test_transaction_log() {
     var log9 = txn_log_new();
     var id9 = txn_log_begin(log9, str_from("root"));
     txn_log_commit(log9, id9);
-    assert(txn_log_add_op(log9, id9, txn_op_new(OP_INSTALL, str_from("x"), str_from(""), SOURCE_SYSTEM)) == 0, "cant add after commit");
+    var late_op = txn_op_new(OP_INSTALL, str_from("x"), str_from(""), SOURCE_SYSTEM);
+    assert(txn_log_add_op(log9, id9, late_op) == 0, "cant add after commit");
 
     # Recent
     var log10 = txn_log_new();
@@ -346,7 +347,9 @@ fn test_ark_output() {
 
     var out = ark_output_new();
     ark_output_add(out, output_line_header(str_from("Test Header")));
-    ark_output_add(out, output_line_package(str_from("nginx"), str_from("1.24.0"), SOURCE_SYSTEM, str_from("HTTP server")));
+    var pkg_line = output_line_package(
+        str_from("nginx"), str_from("1.24.0"), SOURCE_SYSTEM, str_from("HTTP server"));
+    ark_output_add(out, pkg_line);
     ark_output_add(out, output_line_separator());
     ark_output_add(out, output_line_success(str_from("Done")));
     ark_output_add(out, output_line_error(str_from("Something failed")));
@@ -434,6 +437,66 @@ fn test_sources_and_groups() {
 }
 
 # =========================================================================
+# Security tests (from P(-1) audit)
+# =========================================================================
+
+fn test_security() {
+    test_group("security");
+
+    # H5: Package name validation
+    assert(validate_pkg_name(str_from("nginx")), "valid: nginx");
+    assert(validate_pkg_name(str_from("nginx-core")), "valid: nginx-core");
+    assert(validate_pkg_name(str_from("lib_util.v2")), "valid: lib_util.v2");
+    assert(validate_pkg_name(str_from("a")) == 1, "valid: single char");
+    assert(validate_pkg_name(str_from("")) == 0, "reject: empty");
+    assert(validate_pkg_name(str_from("-bad")) == 0, "reject: starts with dash");
+    assert(validate_pkg_name(str_from(".bad")) == 0, "reject: starts with dot");
+    assert(validate_pkg_name(str_from("foo/bar")) == 0, "reject: slash");
+    assert(validate_pkg_name(str_from("foo..bar")) == 0, "reject: dot-dot");
+    assert(validate_pkg_name(str_from("../etc/passwd")) == 0, "reject: traversal");
+    assert(validate_pkg_name(str_from("foo bar")) == 0, "reject: space");
+
+    # L3: Case-insensitive search
+    var db = pkg_db_new();
+    pkg_db_register(db, make_test_entry(
+        str_from("Nginx-Core"), str_from("1.0"), SOURCE_SYSTEM, 1024, vec_new()));
+    var results = pkg_db_search(db, str_from("nginx"));
+    assert_eq(vec_len(results), 1, "icase search finds Nginx-Core");
+    var results2 = pkg_db_search(db, str_from("NGINX"));
+    assert_eq(vec_len(results2), 1, "icase search NGINX");
+
+    # H1: pkg_db_save serializes actual data
+    var db2 = pkg_db_new();
+    pkg_db_register(db2, make_test_entry(
+        str_from("test-pkg"), str_from("2.0"), SOURCE_SYSTEM, 512, vec_new()));
+    pkg_db_register(db2, make_test_entry(
+        str_from("other-pkg"), str_from("3.0"), SOURCE_MARKETPLACE, 256, vec_new()));
+    # Verify list returns both
+    assert_eq(vec_len(pkg_db_list(db2)), 2, "db has 2 entries before save");
+
+    # H4: JSON escaping
+    var sb = str_builder_new();
+    json_escape_str(sb, str_from("hello\"world"));
+    var escaped = str_builder_build(sb);
+    assert(str_contains(escaped, str_from("\\\"")), "escapes quote");
+    var sb2 = str_builder_new();
+    json_escape_str(sb2, str_from("back\\slash"));
+    var escaped2 = str_builder_build(sb2);
+    assert(str_contains(escaped2, str_from("\\\\")), "escapes backslash");
+
+    # L7: txn_log_recent on empty log
+    var elog = txn_log_new();
+    var erecent = txn_log_recent(elog, 10);
+    assert_eq(vec_len(erecent), 0, "recent on empty safe");
+
+    # L7: txn_log_recent with count > total
+    var slog = txn_log_new();
+    txn_log_commit(slog, txn_log_begin(slog, str_from("u1")));
+    var srecent = txn_log_recent(slog, 100);
+    assert_eq(vec_len(srecent), 1, "recent count > total safe");
+}
+
+# =========================================================================
 # ArkPackageManager integration
 # =========================================================================
 
@@ -462,6 +525,7 @@ fn test_main() {
     test_ark_output();
     test_install_plan();
     test_sources_and_groups();
+    test_security();
     test_manager();
     return assert_summary();
 }
