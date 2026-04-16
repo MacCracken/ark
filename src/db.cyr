@@ -3,10 +3,11 @@
 # Fields: name(0) version(8) source(16) installed_at(24) installed_by(32)
 #         size_bytes(40) checksum(48) files(56) dependencies(64)
 #         transaction_id(72) held(80) file_checksums(88)
-#         signature(96) signer_key_id(104)   => 112 bytes
+#         signature(96) signer_key_id(104)
+#         pinned_version(112) pinned_source(120)   => 128 bytes
 # =========================================================================
 
-var PDBE_SZ = 112;
+var PDBE_SZ = 128;
 
 fn pdbe_name(p) { return load64(p); }
 fn pdbe_version(p) { return load64(p + 8); }
@@ -24,6 +25,10 @@ fn pdbe_signature(p) { return load64(p + 96); }
 fn pdbe_set_signature(p, v) { store64(p + 96, v); }
 fn pdbe_signer(p) { return load64(p + 104); }
 fn pdbe_set_signer(p, v) { store64(p + 104, v); }
+fn pdbe_pinned_ver(p) { return load64(p + 112); }
+fn pdbe_set_pinned_ver(p, v) { store64(p + 112, v); }
+fn pdbe_pinned_src(p) { return load64(p + 120); }
+fn pdbe_set_pinned_src(p, v) { store64(p + 120, v); }
 
 fn db_entry_new(name, version, source) {
     var p = alloc(PDBE_SZ);
@@ -41,6 +46,8 @@ fn db_entry_new(name, version, source) {
     store64(p + 88, map_new());
     store64(p + 96, str_from(""));
     store64(p + 104, str_from(""));
+    store64(p + 112, str_from(""));
+    store64(p + 120, 0 - 1);
     return p;
 }
 
@@ -157,10 +164,40 @@ fn pkg_db_new() {
     return p;
 }
 
+# Current database schema version
+var DB_SCHEMA_VERSION = 2;
+# v1: original (name, version, source, size, held)
+# v2: added file_checksums, signature, signer, pinned_version, pinned_source
+
 fn pkg_db_load(path) {
     var p = alloc(PDB_SZ);
     store64(p, map_new());
     store64(p + 8, path);
+    # Load existing DB and check schema version
+    var buf = alloc(65536);
+    var bytes = file_read_all(str_data(path), buf, 524288);
+    if (bytes > 0) {
+        var content = str_new(buf, bytes);
+        var pairs = json_parse(content);
+        if (pairs > 0) {
+            var ver_str = json_get(pairs, "schema_version");
+            var db_ver = 1;
+            if (ver_str > 0) { db_ver = str_to_int(ver_str); }
+            if (db_ver < DB_SCHEMA_VERSION) {
+                # Migration: v1->v2 adds new fields with defaults
+                # Since we re-create entries on load, new fields get
+                # defaults automatically. Just log it.
+                var sb = str_builder_new();
+                str_builder_add_cstr(sb, "ark: migrated db schema v");
+                str_builder_add_int(sb, db_ver);
+                str_builder_add_cstr(sb, " -> v");
+                str_builder_add_int(sb, DB_SCHEMA_VERSION);
+                str_builder_add_cstr(sb, "\n");
+                var msg = str_builder_build(sb);
+                print(str_data(msg), str_len(msg));
+            }
+        }
+    }
     return p;
 }
 
@@ -197,7 +234,9 @@ fn json_escape_str(sb, s) {
 fn pkg_db_save(db) {
     if (str_len(pdb_path(db)) == 0) { return 1; }
     var sb = str_builder_new();
-    str_builder_add_cstr(sb, "{\"packages\":{");
+    str_builder_add_cstr(sb, "{\"schema_version\":");
+    str_builder_add_int(sb, DB_SCHEMA_VERSION);
+    str_builder_add_cstr(sb, ",\"packages\":{");
     var all = pkg_db_list(db);
     var i = 0;
     while (i < vec_len(all)) {
@@ -431,6 +470,83 @@ fn pkg_db_held_packages(db) {
     while (i < vec_len(all)) {
         var entry = vec_get(all, i);
         if (pdbe_held(entry)) { vec_push(result, entry); }
+        i = i + 1;
+    }
+    return result;
+}
+
+# =========================================================================
+# Package pinning: lock version and/or source
+# =========================================================================
+
+# Pin a package to its current version. Returns 1 if found.
+fn pkg_db_pin_version(db, name) {
+    var entry = pkg_db_get(db, str_data(name));
+    if (entry > 0) {
+        pdbe_set_pinned_ver(entry, pdbe_version(entry));
+        return 1;
+    }
+    return 0;
+}
+
+# Pin a package to a specific version string.
+fn pkg_db_pin_version_to(db, name, version) {
+    var entry = pkg_db_get(db, str_data(name));
+    if (entry > 0) { pdbe_set_pinned_ver(entry, version); return 1; }
+    return 0;
+}
+
+# Pin a package to its current source. Returns 1 if found.
+fn pkg_db_pin_source(db, name) {
+    var entry = pkg_db_get(db, str_data(name));
+    if (entry > 0) {
+        pdbe_set_pinned_src(entry, pdbe_source(entry));
+        return 1;
+    }
+    return 0;
+}
+
+# Unpin version for a package.
+fn pkg_db_unpin_version(db, name) {
+    var entry = pkg_db_get(db, str_data(name));
+    if (entry > 0) { pdbe_set_pinned_ver(entry, str_from("")); return 1; }
+    return 0;
+}
+
+# Unpin source for a package.
+fn pkg_db_unpin_source(db, name) {
+    var entry = pkg_db_get(db, str_data(name));
+    if (entry > 0) { pdbe_set_pinned_src(entry, 0 - 1); return 1; }
+    return 0;
+}
+
+# Check if an upgrade to a new version is allowed by pinning.
+# Returns 1 if allowed, 0 if blocked.
+fn pkg_db_upgrade_allowed(db, name, new_version, new_source) {
+    var entry = pkg_db_get(db, str_data(name));
+    if (entry == 0) { return 1; }
+    # Check version pin
+    var pv = pdbe_pinned_ver(entry);
+    if (str_len(pv) > 0) {
+        if (str_eq(pv, new_version) == 0) { return 0; }
+    }
+    # Check source pin
+    var ps = pdbe_pinned_src(entry);
+    if (ps >= 0 && ps != new_source) { return 0; }
+    return 1;
+}
+
+# List all pinned packages
+fn pkg_db_pinned_packages(db) {
+    var result = vec_new();
+    var all = pkg_db_list(db);
+    var i = 0;
+    while (i < vec_len(all)) {
+        var entry = vec_get(all, i);
+        var has_pin = 0;
+        if (str_len(pdbe_pinned_ver(entry)) > 0) { has_pin = 1; }
+        if (pdbe_pinned_src(entry) >= 0) { has_pin = 1; }
+        if (has_pin) { vec_push(result, entry); }
         i = i + 1;
     }
     return result;

@@ -78,6 +78,75 @@ fn validate_pkg_name(name) {
     return 1;
 }
 
+# =========================================================================
+# Typosquatting detection (Levenshtein distance)
+# =========================================================================
+
+fn levenshtein(a, b) {
+    var al = str_len(a);
+    var bl = str_len(b);
+    var ad = str_data(a);
+    var bd = str_data(b);
+    if (al == 0) { return bl; }
+    if (bl == 0) { return al; }
+    # Use single-row DP: prev row in alloc'd array
+    var row = alloc((bl + 1) * 8);
+    var j = 0;
+    while (j <= bl) { store64(row + j * 8, j); j = j + 1; }
+    var i = 0;
+    while (i < al) {
+        var prev = i;
+        j = 0;
+        while (j < bl) {
+            var cost = 0;
+            if (load8(ad + i) != load8(bd + j)) { cost = 1; }
+            var ins = load64(row + (j + 1) * 8) + 1;
+            var del = load64(row + j * 8) + 1;
+            if (j > 0) { del = load64(row + j * 8) + 1; }
+            var sub = prev + cost;
+            var best = ins;
+            if (del < best) { best = del; }
+            if (sub < best) { best = sub; }
+            prev = load64(row + (j + 1) * 8);
+            store64(row + (j + 1) * 8, best);
+            j = j + 1;
+        }
+        store64(row, i + 1);
+        i = i + 1;
+    }
+    return load64(row + bl * 8);
+}
+
+# Check if a package name is suspiciously close to known popular packages.
+# Returns a vec of (name, distance) pairs for close matches, empty if clean.
+fn check_typosquat(name, known_packages) {
+    var warnings = vec_new();
+    var threshold = 2;
+    var nl = str_len(name);
+    if (nl > 6) { threshold = 3; }
+    var i = 0;
+    while (i < vec_len(known_packages)) {
+        var known = vec_get(known_packages, i);
+        if (str_eq(name, known) == 0) {
+            var dist = levenshtein(name, known);
+            if (dist > 0 && dist <= threshold) {
+                var sb = str_builder_new();
+                str_builder_add(sb, known);
+                str_builder_add_cstr(sb, " (distance: ");
+                str_builder_add_int(sb, dist);
+                str_builder_add_cstr(sb, ")");
+                vec_push(warnings, str_builder_build(sb));
+            }
+        }
+        i = i + 1;
+    }
+    return warnings;
+}
+
+# =========================================================================
+# Group meta-package mappings
+# =========================================================================
+
 fn group_meta_package(group) {
     if (streq(group, "desktop")) { return "agnos-desktop"; }
     if (streq(group, "ai")) { return "agnos-ai"; }
@@ -161,7 +230,156 @@ fn ark_execute(mgr, cmd) {
         var out = ark_history(mgr, acmd_count(cmd));
         return ark_result_new(1, ark_output_to_display_string(out), vec_new(), SOURCE_UNKNOWN);
     }
+    if (tag == CMD_PIN) { return ark_pin(mgr, acmd_packages(cmd), acmd_force(cmd)); }
+    if (tag == CMD_UNPIN) { return ark_unpin(mgr, acmd_packages(cmd)); }
+    if (tag == CMD_ROLLBACK) { return ark_rollback(mgr, acmd_package(cmd)); }
+    if (tag == CMD_BACKUP) { return ark_backup(mgr); }
+    if (tag == CMD_RESTORE) { return ark_restore(mgr, acmd_package(cmd)); }
     return ark_result_new(0, str_from("Unknown command"), vec_new(), SOURCE_UNKNOWN);
+}
+
+fn ark_pin(mgr, packages, pin_source) {
+    var affected = vec_new();
+    var i = 0;
+    while (i < vec_len(packages)) {
+        var name = vec_get(packages, i);
+        if (pin_source) {
+            if (pkg_db_pin_source(amgr_db(mgr), name)) { vec_push(affected, name); }
+        } else {
+            if (pkg_db_pin_version(amgr_db(mgr), name)) { vec_push(affected, name); }
+        }
+        i = i + 1;
+    }
+    pkg_db_save(amgr_db(mgr));
+    var sb = str_builder_new();
+    str_builder_add_int(sb, vec_len(affected));
+    if (pin_source) { str_builder_add_cstr(sb, " package(s) source-pinned"); }
+    else { str_builder_add_cstr(sb, " package(s) version-pinned"); }
+    return ark_result_new(1, str_builder_build(sb), affected, SOURCE_UNKNOWN);
+}
+
+fn ark_unpin(mgr, packages) {
+    var affected = vec_new();
+    var i = 0;
+    while (i < vec_len(packages)) {
+        var name = vec_get(packages, i);
+        pkg_db_unpin_version(amgr_db(mgr), name);
+        pkg_db_unpin_source(amgr_db(mgr), name);
+        vec_push(affected, name);
+        i = i + 1;
+    }
+    pkg_db_save(amgr_db(mgr));
+    var sb = str_builder_new();
+    str_builder_add_int(sb, vec_len(affected));
+    str_builder_add_cstr(sb, " package(s) unpinned");
+    return ark_result_new(1, str_builder_build(sb), affected, SOURCE_UNKNOWN);
+}
+
+# Rollback: generate a reverse plan from a transaction.
+# If txn_id is empty, rolls back the most recent committed transaction.
+fn ark_rollback(mgr, txn_id_str) {
+    var log = amgr_log(mgr);
+    var txn = 0;
+    if (str_len(txn_id_str) > 0) {
+        txn = txn_log_get(log, txn_id_str);
+    } else {
+        # Find most recent committed
+        var recent = txn_log_recent(log, 20);
+        var i = 0;
+        while (i < vec_len(recent)) {
+            var t = vec_get(recent, i);
+            if (txn_status(t) == TXN_COMMITTED) { txn = t; break; }
+            i = i + 1;
+        }
+    }
+    if (txn == 0) {
+        return ark_result_new(0, str_from("No transaction found to rollback"), vec_new(), SOURCE_UNKNOWN);
+    }
+    if (txn_status(txn) != TXN_COMMITTED) {
+        return ark_result_new(0, str_from("Transaction is not committed"), vec_new(), SOURCE_UNKNOWN);
+    }
+    # Build reverse plan
+    var plan = install_plan_new();
+    var ops = txn_ops(txn);
+    var affected = vec_new();
+    var i = vec_len(ops) - 1;
+    while (i >= 0) {
+        var op = vec_get(ops, i);
+        var ot = top_type(op);
+        var pkg = top_pkg(op);
+        if (ot == OP_INSTALL) {
+            vec_push(iplan_steps(plan), step_system_remove(pkg, 0));
+            vec_push(affected, pkg);
+        }
+        if (ot == OP_REMOVE) {
+            vec_push(iplan_steps(plan), step_system_install(pkg, str_from("")));
+            vec_push(affected, pkg);
+        }
+        if (i == 0) { break; }
+        i = i - 1;
+    }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "Rollback plan for ");
+    str_builder_add(sb, txn_id(txn));
+    str_builder_add_cstr(sb, ": ");
+    str_builder_add_int(sb, vec_len(iplan_steps(plan)));
+    str_builder_add_cstr(sb, " reverse step(s)");
+    return ark_result_new(1, str_builder_build(sb), affected, SOURCE_UNKNOWN);
+}
+
+# Backup: copy packages.json and transaction.log to a timestamped dir
+fn ark_backup(mgr) {
+    var cfg = amgr_config(mgr);
+    var ts = syscall(201, 0);
+    var sb = str_builder_new();
+    str_builder_add(sb, acfg_cache_dir(cfg));
+    str_builder_add_cstr(sb, "/backup-");
+    str_builder_add_int(sb, ts);
+    var backup_dir = str_builder_build(sb);
+    sys_mkdir(str_data(backup_dir), 448);
+    # Copy package DB
+    var db_src = acfg_db_path(cfg);
+    var db_dst_sb = str_builder_new();
+    str_builder_add(db_dst_sb, backup_dir);
+    str_builder_add_cstr(db_dst_sb, "/packages.json");
+    var db_dst = str_builder_build(db_dst_sb);
+    var buf = alloc(65536);
+    var n = file_read_all(str_data(db_src), buf, 524288);
+    if (n > 0) { file_write_all(str_data(db_dst), buf, n); }
+    # Copy transaction log
+    var log_src = acfg_log_path(cfg);
+    var log_dst_sb = str_builder_new();
+    str_builder_add(log_dst_sb, backup_dir);
+    str_builder_add_cstr(log_dst_sb, "/transaction.log");
+    var log_dst = str_builder_build(log_dst_sb);
+    n = file_read_all(str_data(log_src), buf, 524288);
+    if (n > 0) { file_write_all(str_data(log_dst), buf, n); }
+    var msg_sb = str_builder_new();
+    str_builder_add_cstr(msg_sb, "Backup created: ");
+    str_builder_add(msg_sb, backup_dir);
+    return ark_result_new(1, str_builder_build(msg_sb), vec_new(), SOURCE_UNKNOWN);
+}
+
+# Restore: copy backup files back to active paths
+fn ark_restore(mgr, backup_path) {
+    var cfg = amgr_config(mgr);
+    var buf = alloc(65536);
+    # Restore package DB
+    var db_src_sb = str_builder_new();
+    str_builder_add(db_src_sb, backup_path);
+    str_builder_add_cstr(db_src_sb, "/packages.json");
+    var n = file_read_all(str_data(str_builder_build(db_src_sb)), buf, 524288);
+    if (n > 0) { file_write_all(str_data(acfg_db_path(cfg)), buf, n); }
+    # Restore transaction log
+    var log_src_sb = str_builder_new();
+    str_builder_add(log_src_sb, backup_path);
+    str_builder_add_cstr(log_src_sb, "/transaction.log");
+    n = file_read_all(str_data(str_builder_build(log_src_sb)), buf, 524288);
+    if (n > 0) { file_write_all(str_data(acfg_log_path(cfg)), buf, n); }
+    var msg_sb = str_builder_new();
+    str_builder_add_cstr(msg_sb, "Restored from: ");
+    str_builder_add(msg_sb, backup_path);
+    return ark_result_new(1, str_builder_build(msg_sb), vec_new(), SOURCE_UNKNOWN);
 }
 
 fn ark_install(mgr, packages, force) {

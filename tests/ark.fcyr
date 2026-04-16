@@ -1,16 +1,118 @@
-# ark fuzz harness
+# ark fuzz harnesses
+# Targets: JSONL transaction log parsing, package name validation,
+# CLI argument parsing, JSON escape
 
-fn fuzz_main(data, len) {
+include "src/types.cyr"
+include "src/output.cyr"
+include "src/transaction.cyr"
+include "src/db.cyr"
+include "src/engine.cyr"
+include "src/cli.cyr"
+
+# =========================================================================
+# Fuzz target: JSONL transaction log line parsing
+# Feed arbitrary bytes as a transaction log line
+# =========================================================================
+
+fn fuzz_jsonl(data, len) {
     if (len == 0) { return 0; }
+    var line = str_new(data, len);
+    var pairs = json_parse(line);
+    if (pairs > 0) {
+        var id_val = json_get(pairs, "id");
+        var user_val = json_get(pairs, "user");
+        var status_val = json_get(pairs, "status");
+        if (id_val > 0) {
+            if (user_val == 0) { user_val = str_from(""); }
+            if (status_val == 0) { status_val = str_from(""); }
+            var txn = txn_new(id_val, user_val);
+            if (str_starts_with(id_val, str_from("txn-"))) {
+                var num_str = str_sub(id_val, 4, str_len(id_val) - 4);
+                str_to_int(num_str);
+            }
+        }
+    }
     return 0;
 }
 
-fn main() {
+# =========================================================================
+# Fuzz target: package name validation
+# Feed arbitrary bytes as a package name
+# =========================================================================
+
+fn fuzz_pkg_name(data, len) {
+    if (len == 0) { return 0; }
+    if (len > 256) { len = 256; }
+    var name = str_new(data, len);
+    validate_pkg_name(name);
+    validate_package_name(name);
+    return 0;
+}
+
+# =========================================================================
+# Fuzz target: JSON escape
+# Feed arbitrary bytes through json_escape_str
+# =========================================================================
+
+fn fuzz_json_escape(data, len) {
+    if (len == 0) { return 0; }
+    if (len > 1024) { len = 1024; }
+    var s = str_new(data, len);
+    var sb = str_builder_new();
+    json_escape_str(sb, s);
+    str_builder_build(sb);
+    return 0;
+}
+
+# =========================================================================
+# Fuzz target: source string parsing
+# =========================================================================
+
+fn fuzz_source_parse(data, len) {
+    if (len == 0) { return 0; }
+    if (len > 64) { len = 64; }
+    var buf = alloc(len + 1);
+    memcpy(buf, data, len);
+    store8(buf + len, 0);
+    parse_source_str(buf);
+    return 0;
+}
+
+# =========================================================================
+# Runner: exercise all targets with seed inputs
+# =========================================================================
+
+fn fuzz_main() {
     alloc_init();
-    fuzz_main("test", 4);
-    println("fuzz: ok");
+
+    # JSONL seeds
+    fuzz_jsonl("{}", 2);
+    fuzz_jsonl("{\"id\":\"txn-000001\"}", 22);
+    fuzz_jsonl("{not valid json}", 16);
+    fuzz_jsonl("", 0);
+    fuzz_jsonl("\xff\xff\xff\xff", 4);
+    fuzz_jsonl("{\"id\":\"txn-000001\",\"status\":\"Committed\"}", 42);
+
+    # Package name seeds
+    fuzz_pkg_name("nginx", 5);
+    fuzz_pkg_name("../../../etc/passwd", 19);
+    fuzz_pkg_name("\x00\x00\x00", 3);
+    fuzz_pkg_name("a", 1);
+    fuzz_pkg_name("", 0);
+
+    # JSON escape seeds
+    fuzz_json_escape("hello\"world\ntest\\path", 21);
+    fuzz_json_escape("\x00\x01\x02\x03\x1f", 5);
+    fuzz_json_escape("normal text no escapes", 22);
+
+    # Source parse seeds
+    fuzz_source_parse("system", 6);
+    fuzz_source_parse("SYSTEM", 6);
+    fuzz_source_parse("\xff\x00", 2);
+
+    println("fuzz: all seeds ok");
     return 0;
 }
 
-var r = main();
+var r = fuzz_main();
 syscall(60, r);

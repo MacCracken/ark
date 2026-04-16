@@ -85,6 +85,11 @@ enum ArkCommandTag {
     CMD_UNHOLD = 10;
     CMD_VERIFY = 11;
     CMD_HISTORY = 12;
+    CMD_PIN = 13;
+    CMD_UNPIN = 14;
+    CMD_ROLLBACK = 15;
+    CMD_BACKUP = 16;
+    CMD_RESTORE = 17;
 }
 
 var ACMD_SZ = 72;

@@ -132,8 +132,51 @@ fn parse_args(ac, av) {
         if (ac > hi) { acmd_set_count(c, str_to_int(str_from(argv(hi)))); }
         return c;
     }
-    println("Unknown command. Available: install, remove, search, list,");
-    println("  info, update, upgrade, status, hold, unhold, verify, history");
+    if (streq(command, "pin")) {
+        var c = ark_cmd_new(CMD_PIN);
+        var i = cmd_idx + 1;
+        while (i < ac) {
+            var arg = argv(i);
+            if (streq(arg, "--source")) { acmd_set_force(c, 1); }
+            elif (load8(arg) != 45) { vec_push(acmd_packages(c), str_from(arg)); }
+            i = i + 1;
+        }
+        if (vec_len(acmd_packages(c)) == 0) {
+            println("pin requires at least one package name");
+            return 0;
+        }
+        return c;
+    }
+    if (streq(command, "unpin")) {
+        var c = ark_cmd_new(CMD_UNPIN);
+        var i = cmd_idx + 1;
+        while (i < ac) {
+            if (load8(argv(i)) != 45) { vec_push(acmd_packages(c), str_from(argv(i))); }
+            i = i + 1;
+        }
+        if (vec_len(acmd_packages(c)) == 0) {
+            println("unpin requires at least one package name");
+            return 0;
+        }
+        return c;
+    }
+    if (streq(command, "rollback")) {
+        var c = ark_cmd_new(CMD_ROLLBACK);
+        var ri = cmd_idx + 1;
+        if (ac > ri) { acmd_set_package(c, str_from(argv(ri))); }
+        return c;
+    }
+    if (streq(command, "backup")) { return ark_cmd_new(CMD_BACKUP); }
+    if (streq(command, "restore")) {
+        var c = ark_cmd_new(CMD_RESTORE);
+        var ri = cmd_idx + 1;
+        if (ac > ri) { acmd_set_package(c, str_from(argv(ri))); }
+        else { println("restore requires a backup path"); return 0; }
+        return c;
+    }
+    println("Unknown command. Available: install, remove, search, list, info,");
+    println("  update, upgrade, status, hold, unhold, verify, history, pin, unpin,");
+    println("  rollback, backup, restore");
     return 0;
 }
 
@@ -171,18 +214,34 @@ fn load_config_from(path) {
 }
 
 fn load_config() {
-    var env_path = getenv("ARK_CONFIG");
-    if (env_path > 0) { if (file_exists(env_path)) { return load_config_from(str_from(env_path)); } }
-    if (file_exists("./ark.toml")) { return load_config_from(str_from("./ark.toml")); }
-    var home = getenv("HOME");
-    if (home > 0) {
-        var sb = str_builder_new();
-        str_builder_add_cstr(sb, home);
-        str_builder_add_cstr(sb, "/.config/ark/ark.toml");
-        var hp = str_builder_build(sb);
-        if (file_exists(str_data(hp))) { return load_config_from(hp); }
+    # Security: when running as root (euid=0), skip user-writable configs
+    # to prevent local config injection attacks (audit finding C4)
+    var euid = sys_geteuid();
+    var privileged = (euid == 0);
+
+    if (privileged == 0) {
+        # 1. $ARK_CONFIG env var (unprivileged only)
+        var env_path = getenv("ARK_CONFIG");
+        if (env_path > 0) {
+            if (file_exists(env_path)) { return load_config_from(str_from(env_path)); }
+        }
+        # 2. ./ark.toml (unprivileged only)
+        if (file_exists("./ark.toml")) { return load_config_from(str_from("./ark.toml")); }
+        # 3. ~/.config/ark/ark.toml (unprivileged only)
+        var home = getenv("HOME");
+        if (home > 0) {
+            var sb = str_builder_new();
+            str_builder_add_cstr(sb, home);
+            str_builder_add_cstr(sb, "/.config/ark/ark.toml");
+            var hp = str_builder_build(sb);
+            if (file_exists(str_data(hp))) { return load_config_from(hp); }
+        }
     }
-    if (file_exists("/etc/agnos/ark.toml")) { return load_config_from(str_from("/etc/agnos/ark.toml")); }
+    # 4. /etc/agnos/ark.toml (always trusted)
+    if (file_exists("/etc/agnos/ark.toml")) {
+        return load_config_from(str_from("/etc/agnos/ark.toml"));
+    }
+    # 5. Defaults
     return ark_config_default();
 }
 

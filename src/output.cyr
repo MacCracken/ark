@@ -203,3 +203,73 @@ fn ark_output_render(output, color) {
     if (color) { return ark_output_to_colored_string(output); }
     return ark_output_to_display_string(output);
 }
+
+# =========================================================================
+# Progress spinner
+# =========================================================================
+
+var SPINNER_FRAMES = 0;
+var SPINNER_FRAME_COUNT = 4;
+
+fn spinner_init() {
+    if (SPINNER_FRAMES != 0) { return 0; }
+    SPINNER_FRAMES = vec_new();
+    vec_push(SPINNER_FRAMES, str_from("|"));
+    vec_push(SPINNER_FRAMES, str_from("/"));
+    vec_push(SPINNER_FRAMES, str_from("-"));
+    vec_push(SPINNER_FRAMES, str_from("\\"));
+}
+
+fn spinner_show(frame, message) {
+    spinner_init();
+    var f = vec_get(SPINNER_FRAMES, frame % SPINNER_FRAME_COUNT);
+    print("\r", 1);
+    print(str_data(f), str_len(f));
+    print(" ", 1);
+    print(str_data(message), str_len(message));
+    print("   ", 3);
+}
+
+fn spinner_clear() {
+    print("\r", 1);
+    print("                                                  \r", 51);
+}
+
+# =========================================================================
+# Dependency conflict display
+# =========================================================================
+
+fn format_conflict(pkg_name, installed_ver, requested_ver, source) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "  ");
+    str_builder_add(sb, pkg_name);
+    str_builder_add_cstr(sb, ": installed ");
+    str_builder_add(sb, installed_ver);
+    str_builder_add_cstr(sb, ", requested ");
+    str_builder_add(sb, requested_ver);
+    str_builder_add_cstr(sb, " [");
+    str_builder_add(sb, source_to_str(source));
+    str_builder_add_cstr(sb, "]");
+    return str_builder_build(sb);
+}
+
+fn show_conflicts(conflicts) {
+    if (vec_len(conflicts) == 0) { return 0; }
+    println("Dependency conflicts detected:");
+    var i = 0;
+    while (i < vec_len(conflicts)) {
+        var c = vec_get(conflicts, i);
+        print(str_data(c), str_len(c));
+        print("\n", 1);
+        i = i + 1;
+    }
+    println("");
+    println("Options:");
+    println("  1) Force install (override conflicts)");
+    println("  2) Cancel");
+    print("Choose [1/2]: ", 14);
+    var buf[4];
+    var n = syscall(SYS_READ, STDIN, &buf, 32);
+    if (n > 0 && load8(&buf) == 49) { return 1; }
+    return 0;
+}
