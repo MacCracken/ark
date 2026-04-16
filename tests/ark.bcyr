@@ -1,6 +1,11 @@
 # ark benchmarks - manual timing (fn pointers unstable via pipe compile)
 
-include "src/main.cyr"
+include "src/types.cyr"
+include "src/output.cyr"
+include "src/transaction.cyr"
+include "src/db.cyr"
+include "src/engine.cyr"
+include "src/cli.cyr"
 
 fn now_us() {
     var buf[16];

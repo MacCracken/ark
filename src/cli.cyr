@@ -1,0 +1,277 @@
+# =========================================================================
+# CLI argument parsing
+# =========================================================================
+
+fn parse_args(ac, av) {
+    if (ac < 2) {
+        println("No command specified. Usage: ark <command> [options] [packages...]");
+        return 0;
+    }
+    # Skip leading --no-color to find the actual command
+    var cmd_idx = 1;
+    while (cmd_idx < ac && streq(argv(cmd_idx), "--no-color")) { cmd_idx = cmd_idx + 1; }
+    if (cmd_idx >= ac) {
+        println("No command specified. Usage: ark <command> [options] [packages...]");
+        return 0;
+    }
+    var command = argv(cmd_idx);
+    if (streq(command, "install")) {
+        var c = ark_cmd_new(CMD_INSTALL);
+        var i = cmd_idx + 1;
+        while (i < ac) {
+            var arg = argv(i);
+            if (streq(arg, "--force") || streq(arg, "-f")) { acmd_set_force(c, 1); }
+            elif (streq(arg, "--group") || streq(arg, "-g")) {
+                i = i + 1;
+                if (i >= ac) { println("--group requires a group name"); return 0; }
+                acmd_set_tag(c, CMD_GROUP_INSTALL);
+                acmd_set_group(c, str_from(argv(i)));
+            } elif (load8(arg) != 45) { vec_push(acmd_packages(c), str_from(arg)); }
+            else { println("Unknown flag for install"); return 0; }
+            i = i + 1;
+        }
+        if (acmd_tag(c) == CMD_INSTALL && vec_len(acmd_packages(c)) == 0) {
+            println("install requires at least one package name or --group <name>");
+            return 0;
+        }
+        return c;
+    }
+    if (streq(command, "remove") || streq(command, "uninstall")) {
+        var c = ark_cmd_new(CMD_REMOVE);
+        var i = cmd_idx + 1;
+        while (i < ac) {
+            var arg = argv(i);
+            if (streq(arg, "--purge")) { acmd_set_purge(c, 1); }
+            elif (load8(arg) != 45) { vec_push(acmd_packages(c), str_from(arg)); }
+            else { println("Unknown flag for remove"); return 0; }
+            i = i + 1;
+        }
+        if (vec_len(acmd_packages(c)) == 0) { println("remove requires at least one package name"); return 0; }
+        return c;
+    }
+    if (streq(command, "search")) {
+        var c = ark_cmd_new(CMD_SEARCH);
+        var parts = vec_new();
+        var i = cmd_idx + 1;
+        while (i < ac) {
+            var arg = argv(i);
+            if (streq(arg, "--source") || streq(arg, "-s")) {
+                i = i + 1;
+                if (i >= ac) { println("--source requires a value"); return 0; }
+                var src = parse_source_str(argv(i));
+                if (is_ok(src)) { acmd_set_source(c, result_unwrap(src)); }
+                else { println("Unknown source"); return 0; }
+            } elif (load8(arg) != 45) { vec_push(parts, str_from(arg)); }
+            else { println("Unknown flag for search"); return 0; }
+            i = i + 1;
+        }
+        if (vec_len(parts) == 0) { println("search requires a query string"); return 0; }
+        acmd_set_query(c, str_join(parts, str_from(" ")));
+        return c;
+    }
+    if (streq(command, "list") || streq(command, "ls")) {
+        var c = ark_cmd_new(CMD_LIST);
+        var i = cmd_idx + 1;
+        while (i < ac) {
+            var arg = argv(i);
+            if (streq(arg, "--marketplace") || streq(arg, "--market")) { acmd_set_source(c, SOURCE_MARKETPLACE); }
+            elif (streq(arg, "--system") || streq(arg, "--apt")) { acmd_set_source(c, SOURCE_SYSTEM); }
+            elif (streq(arg, "--flutter")) { acmd_set_source(c, SOURCE_FLUTTER_APP); }
+            else { println("Unknown flag for list"); return 0; }
+            i = i + 1;
+        }
+        return c;
+    }
+    if (streq(command, "info") || streq(command, "show")) {
+        if (ac < cmd_idx + 2) { println("info requires a package name"); return 0; }
+        var c = ark_cmd_new(CMD_INFO);
+        acmd_set_package(c, str_from(argv(cmd_idx + 1)));
+        return c;
+    }
+    if (streq(command, "update")) { return ark_cmd_new(CMD_UPDATE); }
+    if (streq(command, "upgrade")) {
+        var c = ark_cmd_new(CMD_UPGRADE);
+        var i = cmd_idx + 1;
+        while (i < ac) {
+            var arg = argv(i);
+            if (load8(arg) != 45) { vec_push(acmd_packages(c), str_from(arg)); }
+            i = i + 1;
+        }
+        return c;
+    }
+    if (streq(command, "status")) { return ark_cmd_new(CMD_STATUS); }
+    if (streq(command, "hold")) {
+        var c = ark_cmd_new(CMD_HOLD);
+        var i = cmd_idx + 1;
+        while (i < ac) {
+            if (load8(argv(i)) != 45) { vec_push(acmd_packages(c), str_from(argv(i))); }
+            i = i + 1;
+        }
+        if (vec_len(acmd_packages(c)) == 0) { println("hold requires at least one package name"); return 0; }
+        return c;
+    }
+    if (streq(command, "unhold")) {
+        var c = ark_cmd_new(CMD_UNHOLD);
+        var i = cmd_idx + 1;
+        while (i < ac) {
+            if (load8(argv(i)) != 45) { vec_push(acmd_packages(c), str_from(argv(i))); }
+            i = i + 1;
+        }
+        if (vec_len(acmd_packages(c)) == 0) { println("unhold requires at least one package name"); return 0; }
+        return c;
+    }
+    if (streq(command, "verify")) {
+        var c = ark_cmd_new(CMD_VERIFY);
+        var vi = cmd_idx + 1;
+        if (ac > vi && load8(argv(vi)) != 45) { acmd_set_package(c, str_from(argv(vi))); }
+        return c;
+    }
+    if (streq(command, "history")) {
+        var c = ark_cmd_new(CMD_HISTORY);
+        var hi = cmd_idx + 1;
+        if (ac > hi) { acmd_set_count(c, str_to_int(str_from(argv(hi)))); }
+        return c;
+    }
+    println("Unknown command. Available: install, remove, search, list,");
+    println("  info, update, upgrade, status, hold, unhold, verify, history");
+    return 0;
+}
+
+# =========================================================================
+# Config file loading (TOML)
+# =========================================================================
+
+fn load_config_from(path) {
+    var config = ark_config_default();
+    var buf = alloc(65536);
+    var bytes = file_read_all(str_data(path), buf, 524288);
+    if (bytes <= 0) { return config; }
+    var content = str_new(buf, bytes);
+    var sections = toml_parse(content);
+    if (sections == 0) { return config; }
+    var i = 0;
+    while (i < vec_len(sections)) {
+        var section = vec_get(sections, i);
+        var pairs = toml_section_pairs(section);
+        var val = toml_get(pairs, "color_output");
+        if (val > 0) { if (streq(str_data(val), "false")) { acfg_set_color(config, 0); } }
+        val = toml_get(pairs, "confirm_system_installs");
+        if (val > 0) { if (streq(str_data(val), "false")) { store64(config + 8, 0); } }
+        val = toml_get(pairs, "confirm_removals");
+        if (val > 0) { if (streq(str_data(val), "false")) { store64(config + 16, 0); } }
+        val = toml_get(pairs, "auto_update_check");
+        if (val > 0) { if (streq(str_data(val), "true")) { store64(config + 24, 1); } }
+        val = toml_get(pairs, "marketplace_dir");
+        if (val > 0) { store64(config + 40, val); }
+        val = toml_get(pairs, "cache_dir");
+        if (val > 0) { store64(config + 48, val); }
+        i = i + 1;
+    }
+    return config;
+}
+
+fn load_config() {
+    var env_path = getenv("ARK_CONFIG");
+    if (env_path > 0) { if (file_exists(env_path)) { return load_config_from(str_from(env_path)); } }
+    if (file_exists("./ark.toml")) { return load_config_from(str_from("./ark.toml")); }
+    var home = getenv("HOME");
+    if (home > 0) {
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, home);
+        str_builder_add_cstr(sb, "/.config/ark/ark.toml");
+        var hp = str_builder_build(sb);
+        if (file_exists(str_data(hp))) { return load_config_from(hp); }
+    }
+    if (file_exists("/etc/agnos/ark.toml")) { return load_config_from(str_from("/etc/agnos/ark.toml")); }
+    return ark_config_default();
+}
+
+# =========================================================================
+# Interactive confirmation
+# =========================================================================
+
+fn confirm(prompt) {
+    print(str_data(prompt), str_len(prompt));
+    print(" [y/N] ", 7);
+    var buf[16];
+    var n = syscall(SYS_READ, STDIN, &buf, 128);
+    if (n <= 0) { return 0; }
+    var first = load8(&buf);
+    if (first == 121 || first == 89) { return 1; }
+    return 0;
+}
+
+fn needs_confirmation(cmd, config) {
+    var tag = acmd_tag(cmd);
+    if (tag == CMD_INSTALL || tag == CMD_GROUP_INSTALL) {
+        if (acfg_confirm_sys(config)) {
+            var sb = str_builder_new();
+            if (tag == CMD_GROUP_INSTALL) {
+                str_builder_add_cstr(sb, "Install group ");
+                str_builder_add(sb, acmd_group(cmd));
+            } else {
+                str_builder_add_cstr(sb, "Install ");
+                var pkgs = acmd_packages(cmd);
+                var i = 0;
+                while (i < vec_len(pkgs)) {
+                    if (i > 0) { str_builder_add_cstr(sb, ", "); }
+                    str_builder_add(sb, vec_get(pkgs, i));
+                    i = i + 1;
+                }
+            }
+            str_builder_add_cstr(sb, "?");
+            return str_builder_build(sb);
+        }
+    }
+    if (tag == CMD_REMOVE) {
+        if (acfg_confirm_rm(config)) {
+            var sb = str_builder_new();
+            if (acmd_purge(cmd)) { str_builder_add_cstr(sb, "Purge "); }
+            else { str_builder_add_cstr(sb, "Remove "); }
+            var pkgs = acmd_packages(cmd);
+            var i = 0;
+            while (i < vec_len(pkgs)) {
+                if (i > 0) { str_builder_add_cstr(sb, ", "); }
+                str_builder_add(sb, vec_get(pkgs, i));
+                i = i + 1;
+            }
+            str_builder_add_cstr(sb, "?");
+            return str_builder_build(sb);
+        }
+    }
+    return 0;
+}
+
+# =========================================================================
+# Main entry point
+# =========================================================================
+
+fn main() {
+    alloc_init();
+    args_init();
+    var ac = argc();
+    var cmd = parse_args(ac, 0);
+    if (cmd == 0) { return 1; }
+    var config = load_config();
+    var i = 1;
+    while (i < ac) {
+        if (streq(argv(i), "--no-color")) { acfg_set_color(config, 0); }
+        i = i + 1;
+    }
+    var prompt = needs_confirmation(cmd, config);
+    if (prompt > 0) {
+        if (confirm(prompt) == 0) { println("Cancelled."); return 0; }
+    }
+    var mgr = ark_mgr_new(config);
+    var result = ark_execute(mgr, cmd);
+    var output = ark_output_new();
+    if (ares_success(result)) {
+        ark_output_add(output, output_line_success(ares_message(result)));
+    } else {
+        ark_output_add(output, output_line_error(ares_message(result)));
+    }
+    var rendered = ark_output_render(output, acfg_color(config));
+    print(str_data(rendered), str_len(rendered));
+    if (ares_success(result) == 0) { return 1; }
+    return 0;
+}

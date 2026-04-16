@@ -1,0 +1,205 @@
+# =========================================================================
+# ArkOutputLine
+# Fields: tag(0) text(8) name(16) version(24) source(32) description(40)
+#         key(48) value(56)   => 64 bytes
+# =========================================================================
+
+enum OutputLineTag {
+    LINE_HEADER = 0;
+    LINE_PACKAGE = 1;
+    LINE_INFO = 2;
+    LINE_SEPARATOR = 3;
+    LINE_SUCCESS = 4;
+    LINE_ERROR = 5;
+    LINE_WARNING = 6;
+}
+
+var OLINE_SZ = 64;
+
+fn oline_tag(p) { return load64(p); }
+fn oline_text(p) { return load64(p + 8); }
+fn oline_name(p) { return load64(p + 16); }
+fn oline_version(p) { return load64(p + 24); }
+fn oline_source(p) { return load64(p + 32); }
+fn oline_desc(p) { return load64(p + 40); }
+fn oline_key(p) { return load64(p + 48); }
+fn oline_value(p) { return load64(p + 56); }
+
+fn output_line_header(text) {
+    var p = alloc(OLINE_SZ);
+    store64(p, LINE_HEADER);
+    store64(p + 8, text);
+    return p;
+}
+
+fn output_line_package(name, version, source, description) {
+    var p = alloc(OLINE_SZ);
+    store64(p, LINE_PACKAGE);
+    store64(p + 16, name);
+    store64(p + 24, version);
+    store64(p + 32, source);
+    store64(p + 40, description);
+    return p;
+}
+
+fn output_line_info(key, value) {
+    var p = alloc(OLINE_SZ);
+    store64(p, LINE_INFO);
+    store64(p + 48, key);
+    store64(p + 56, value);
+    return p;
+}
+
+fn output_line_separator() {
+    var p = alloc(OLINE_SZ);
+    store64(p, LINE_SEPARATOR);
+    return p;
+}
+
+fn output_line_success(text) {
+    var p = alloc(OLINE_SZ);
+    store64(p, LINE_SUCCESS);
+    store64(p + 8, text);
+    return p;
+}
+
+fn output_line_error(text) {
+    var p = alloc(OLINE_SZ);
+    store64(p, LINE_ERROR);
+    store64(p + 8, text);
+    return p;
+}
+
+fn output_line_warning(text) {
+    var p = alloc(OLINE_SZ);
+    store64(p, LINE_WARNING);
+    store64(p + 8, text);
+    return p;
+}
+
+# =========================================================================
+# ArkOutput - vec of ArkOutputLine
+# =========================================================================
+
+fn ark_output_new() { return vec_new(); }
+fn ark_output_add(out, line) { vec_push(out, line); }
+
+fn ark_output_to_display_string(output) {
+    var sb = str_builder_new();
+    var i = 0;
+    var len = vec_len(output);
+    while (i < len) {
+        var ln = vec_get(output, i);
+        var t = oline_tag(ln);
+        if (t == LINE_HEADER) {
+            str_builder_add_cstr(sb, "=== ");
+            str_builder_add(sb, oline_text(ln));
+            str_builder_add_cstr(sb, " ===\n");
+        }
+        if (t == LINE_PACKAGE) {
+            str_builder_add_cstr(sb, "  ");
+            str_builder_add(sb, oline_name(ln));
+            str_builder_add_cstr(sb, " (");
+            str_builder_add(sb, oline_version(ln));
+            str_builder_add_cstr(sb, ") [");
+            str_builder_add_cstr(sb, source_to_str(oline_source(ln)));
+            str_builder_add_cstr(sb, "] -- ");
+            str_builder_add(sb, oline_desc(ln));
+            str_builder_add_cstr(sb, "\n");
+        }
+        if (t == LINE_INFO) {
+            str_builder_add_cstr(sb, "  ");
+            str_builder_add(sb, oline_key(ln));
+            str_builder_add_cstr(sb, ": ");
+            str_builder_add(sb, oline_value(ln));
+            str_builder_add_cstr(sb, "\n");
+        }
+        if (t == LINE_SEPARATOR) { str_builder_add_cstr(sb, "---\n"); }
+        if (t == LINE_SUCCESS) {
+            str_builder_add_cstr(sb, "OK: ");
+            str_builder_add(sb, oline_text(ln));
+            str_builder_add_cstr(sb, "\n");
+        }
+        if (t == LINE_ERROR) {
+            str_builder_add_cstr(sb, "ERROR: ");
+            str_builder_add(sb, oline_text(ln));
+            str_builder_add_cstr(sb, "\n");
+        }
+        if (t == LINE_WARNING) {
+            str_builder_add_cstr(sb, "WARN: ");
+            str_builder_add(sb, oline_text(ln));
+            str_builder_add_cstr(sb, "\n");
+        }
+        i = i + 1;
+    }
+    return str_builder_build(sb);
+}
+
+fn ark_output_to_colored_string(output) {
+    var sb = str_builder_new();
+    var i = 0;
+    var len = vec_len(output);
+    while (i < len) {
+        var ln = vec_get(output, i);
+        var t = oline_tag(ln);
+        if (t == LINE_HEADER) {
+            str_builder_add_cstr(sb, ANSI_BOLD);
+            str_builder_add_cstr(sb, "=== ");
+            str_builder_add(sb, oline_text(ln));
+            str_builder_add_cstr(sb, " ===");
+            str_builder_add_cstr(sb, ANSI_RESET);
+            str_builder_add_cstr(sb, "\n");
+        }
+        if (t == LINE_PACKAGE) {
+            str_builder_add_cstr(sb, "  ");
+            str_builder_add_cstr(sb, ANSI_CYAN);
+            str_builder_add(sb, oline_name(ln));
+            str_builder_add_cstr(sb, ANSI_RESET);
+            str_builder_add_cstr(sb, " (");
+            str_builder_add(sb, oline_version(ln));
+            str_builder_add_cstr(sb, ") [");
+            str_builder_add_cstr(sb, source_to_str(oline_source(ln)));
+            str_builder_add_cstr(sb, "] -- ");
+            str_builder_add(sb, oline_desc(ln));
+            str_builder_add_cstr(sb, "\n");
+        }
+        if (t == LINE_INFO) {
+            str_builder_add_cstr(sb, "  ");
+            str_builder_add_cstr(sb, ANSI_BOLD);
+            str_builder_add(sb, oline_key(ln));
+            str_builder_add_cstr(sb, ANSI_RESET);
+            str_builder_add_cstr(sb, ": ");
+            str_builder_add(sb, oline_value(ln));
+            str_builder_add_cstr(sb, "\n");
+        }
+        if (t == LINE_SEPARATOR) { str_builder_add_cstr(sb, "---\n"); }
+        if (t == LINE_SUCCESS) {
+            str_builder_add_cstr(sb, ANSI_GREEN);
+            str_builder_add_cstr(sb, "OK: ");
+            str_builder_add(sb, oline_text(ln));
+            str_builder_add_cstr(sb, ANSI_RESET);
+            str_builder_add_cstr(sb, "\n");
+        }
+        if (t == LINE_ERROR) {
+            str_builder_add_cstr(sb, ANSI_RED);
+            str_builder_add_cstr(sb, "ERROR: ");
+            str_builder_add(sb, oline_text(ln));
+            str_builder_add_cstr(sb, ANSI_RESET);
+            str_builder_add_cstr(sb, "\n");
+        }
+        if (t == LINE_WARNING) {
+            str_builder_add_cstr(sb, ANSI_YELLOW);
+            str_builder_add_cstr(sb, "WARN: ");
+            str_builder_add(sb, oline_text(ln));
+            str_builder_add_cstr(sb, ANSI_RESET);
+            str_builder_add_cstr(sb, "\n");
+        }
+        i = i + 1;
+    }
+    return str_builder_build(sb);
+}
+
+fn ark_output_render(output, color) {
+    if (color) { return ark_output_to_colored_string(output); }
+    return ark_output_to_display_string(output);
+}

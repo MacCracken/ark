@@ -1,7 +1,12 @@
 # ark test suite - ported from 46 Rust tests (1803 lines)
 # Uses accessor functions (load64/store64) for struct field access
 
-include "src/main.cyr"
+include "src/types.cyr"
+include "src/output.cyr"
+include "src/transaction.cyr"
+include "src/db.cyr"
+include "src/engine.cyr"
+include "src/cli.cyr"
 
 # =========================================================================
 # Helper: create a test PackageDbEntry

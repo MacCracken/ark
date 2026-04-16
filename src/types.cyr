@@ -1,0 +1,251 @@
+# ark - Unified Package Manager CLI for AGNOS
+# Ported from 4363 lines of Rust
+#
+# ark is the user-facing CLI for AGNOS package management. It translates
+# user commands into operations, using the nous resolver to figure out where
+# packages come from (system apt, marketplace agents, or Flutter app bundles),
+# then produces execution plans that callers can run with appropriate
+# permissions via shakti.
+#
+# ark does NOT directly execute apt-get or dpkg. It generates InstallPlan
+# instructions - a deliberate security design choice.
+
+# Stdlib auto-included via cyrius.cyml
+
+# =========================================================================
+# Constants
+# =========================================================================
+
+var ARK_VERSION_STR = "0.8.0";
+
+var DEFAULT_TRANSACTION_LOG_PATH = "/var/lib/agnos/ark/transaction.log";
+var DEFAULT_PACKAGE_DB_PATH = "/var/lib/agnos/ark/packages.json";
+
+# ANSI color codes
+var ANSI_RESET = "\x1b[0m";
+var ANSI_BOLD = "\x1b[1m";
+var ANSI_GREEN = "\x1b[32m";
+var ANSI_RED = "\x1b[31m";
+var ANSI_YELLOW = "\x1b[33m";
+var ANSI_CYAN = "\x1b[36m";
+
+# =========================================================================
+# PackageSource enum (from nous - stubbed here until nous is ported)
+# =========================================================================
+
+enum PackageSource {
+    SOURCE_SYSTEM = 0;
+    SOURCE_MARKETPLACE = 1;
+    SOURCE_FLUTTER_APP = 2;
+    SOURCE_COMMUNITY = 3;
+    SOURCE_UNKNOWN = 4;
+}
+
+fn source_to_str(src) {
+    if (src == SOURCE_SYSTEM) { return "system"; }
+    if (src == SOURCE_MARKETPLACE) { return "marketplace"; }
+    if (src == SOURCE_FLUTTER_APP) { return "flutter-app"; }
+    if (src == SOURCE_COMMUNITY) { return "community"; }
+    return "unknown";
+}
+
+fn parse_source_str(s) {
+    if (streq(s, "system")) { return Ok(SOURCE_SYSTEM); }
+    if (streq(s, "apt")) { return Ok(SOURCE_SYSTEM); }
+    if (streq(s, "marketplace")) { return Ok(SOURCE_MARKETPLACE); }
+    if (streq(s, "market")) { return Ok(SOURCE_MARKETPLACE); }
+    if (streq(s, "flutter")) { return Ok(SOURCE_FLUTTER_APP); }
+    if (streq(s, "flutter-app")) { return Ok(SOURCE_FLUTTER_APP); }
+    if (streq(s, "flutterapp")) { return Ok(SOURCE_FLUTTER_APP); }
+    return Err(1);
+}
+
+# =========================================================================
+# ResolutionStrategy enum (from nous - stubbed)
+# =========================================================================
+
+enum ResolutionStrategy {
+    STRATEGY_MARKETPLACE_FIRST = 0;
+    STRATEGY_SYSTEM_FIRST = 1;
+    STRATEGY_ONLY_SOURCE = 2;
+    STRATEGY_SEARCH_ALL = 3;
+}
+
+fn strategy_to_str(s) {
+    if (s == STRATEGY_MARKETPLACE_FIRST) { return "MarketplaceFirst"; }
+    if (s == STRATEGY_SYSTEM_FIRST) { return "SystemFirst"; }
+    if (s == STRATEGY_ONLY_SOURCE) { return "OnlySource"; }
+    if (s == STRATEGY_SEARCH_ALL) { return "SearchAll"; }
+    return "Unknown";
+}
+
+# =========================================================================
+# ArkCommand - tagged struct with accessors
+# Fields: tag(0) packages(8) query(16) group(24) package(32) source(40)
+#         force(48) purge(56) count(64)   => 72 bytes
+# =========================================================================
+
+enum ArkCommandTag {
+    CMD_INSTALL = 0;
+    CMD_GROUP_INSTALL = 1;
+    CMD_REMOVE = 2;
+    CMD_SEARCH = 3;
+    CMD_LIST = 4;
+    CMD_INFO = 5;
+    CMD_UPDATE = 6;
+    CMD_UPGRADE = 7;
+    CMD_STATUS = 8;
+    CMD_HOLD = 9;
+    CMD_UNHOLD = 10;
+    CMD_VERIFY = 11;
+    CMD_HISTORY = 12;
+}
+
+var ACMD_SZ = 72;
+
+fn acmd_tag(p) { return load64(p); }
+fn acmd_set_tag(p, v) { store64(p, v); }
+fn acmd_packages(p) { return load64(p + 8); }
+fn acmd_set_packages(p, v) { store64(p + 8, v); }
+fn acmd_query(p) { return load64(p + 16); }
+fn acmd_set_query(p, v) { store64(p + 16, v); }
+fn acmd_group(p) { return load64(p + 24); }
+fn acmd_set_group(p, v) { store64(p + 24, v); }
+fn acmd_package(p) { return load64(p + 32); }
+fn acmd_set_package(p, v) { store64(p + 32, v); }
+fn acmd_source(p) { return load64(p + 40); }
+fn acmd_set_source(p, v) { store64(p + 40, v); }
+fn acmd_force(p) { return load64(p + 48); }
+fn acmd_set_force(p, v) { store64(p + 48, v); }
+fn acmd_purge(p) { return load64(p + 56); }
+fn acmd_set_purge(p, v) { store64(p + 56, v); }
+fn acmd_count(p) { return load64(p + 64); }
+fn acmd_set_count(p, v) { store64(p + 64, v); }
+
+fn ark_cmd_new(tag) {
+    var p = alloc(ACMD_SZ);
+    acmd_set_tag(p, tag);
+    acmd_set_packages(p, vec_new());
+    acmd_set_query(p, str_from(""));
+    acmd_set_group(p, str_from(""));
+    acmd_set_package(p, str_from(""));
+    acmd_set_source(p, 0 - 1);
+    acmd_set_force(p, 0);
+    acmd_set_purge(p, 0);
+    acmd_set_count(p, 0 - 1);
+    return p;
+}
+# =========================================================================
+# InstallStep
+# Fields: tag(0) package(8) version(16) purge(24)   => 32 bytes
+# =========================================================================
+
+enum InstallStepTag {
+    STEP_SYSTEM_INSTALL = 0;
+    STEP_SYSTEM_REMOVE = 1;
+    STEP_MARKETPLACE_INSTALL = 2;
+    STEP_MARKETPLACE_REMOVE = 3;
+    STEP_FLUTTER_INSTALL = 4;
+    STEP_FLUTTER_REMOVE = 5;
+    STEP_SYSTEM_UPDATE = 6;
+}
+
+var ISTEP_SZ = 32;
+
+fn istep_tag(p) { return load64(p); }
+fn istep_pkg(p) { return load64(p + 8); }
+fn istep_ver(p) { return load64(p + 16); }
+fn istep_purge(p) { return load64(p + 24); }
+
+fn step_new(tag, pkg, ver, purge) {
+    var p = alloc(ISTEP_SZ);
+    store64(p, tag);
+    store64(p + 8, pkg);
+    store64(p + 16, ver);
+    store64(p + 24, purge);
+    return p;
+}
+
+fn step_system_install(pkg, ver) { return step_new(STEP_SYSTEM_INSTALL, pkg, ver, 0); }
+fn step_system_remove(pkg, purge) { return step_new(STEP_SYSTEM_REMOVE, pkg, str_from(""), purge); }
+fn step_marketplace_install(pkg, ver) { return step_new(STEP_MARKETPLACE_INSTALL, pkg, ver, 0); }
+fn step_marketplace_remove(pkg) { return step_new(STEP_MARKETPLACE_REMOVE, pkg, str_from(""), 0); }
+fn step_flutter_install(pkg, ver) { return step_new(STEP_FLUTTER_INSTALL, pkg, ver, 0); }
+fn step_flutter_remove(pkg) { return step_new(STEP_FLUTTER_REMOVE, pkg, str_from(""), 0); }
+fn step_system_update() { return step_new(STEP_SYSTEM_UPDATE, str_from(""), str_from(""), 0); }
+
+# =========================================================================
+# InstallPlan
+# Fields: steps(0) requires_root(8) estimated_size_bytes(16)   => 24 bytes
+# =========================================================================
+
+var IPLAN_SZ = 24;
+
+fn iplan_steps(p) { return load64(p); }
+fn iplan_root(p) { return load64(p + 8); }
+fn iplan_set_root(p, v) { store64(p + 8, v); }
+fn iplan_size(p) { return load64(p + 16); }
+fn iplan_add_size(p, v) { store64(p + 16, load64(p + 16) + v); }
+
+fn install_plan_new() {
+    var p = alloc(IPLAN_SZ);
+    store64(p, vec_new());
+    store64(p + 8, 0);
+    store64(p + 16, 0);
+    return p;
+}
+
+# =========================================================================
+# ArkResult
+# Fields: success(0) message(8) packages_affected(16) source(24) => 32 bytes
+# =========================================================================
+
+var ARES_SZ = 32;
+
+fn ares_success(p) { return load64(p); }
+fn ares_message(p) { return load64(p + 8); }
+fn ares_packages(p) { return load64(p + 16); }
+fn ares_source(p) { return load64(p + 24); }
+
+fn ark_result_new(success, message, packages, source) {
+    var p = alloc(ARES_SZ);
+    store64(p, success);
+    store64(p + 8, message);
+    store64(p + 16, packages);
+    store64(p + 24, source);
+    return p;
+}
+
+# =========================================================================
+# ArkConfig
+# Fields: default_strategy(0) confirm_system_installs(8) confirm_removals(16)
+#         auto_update_check(24) color_output(32) marketplace_dir(40)
+#         cache_dir(48) package_db_path(56) transaction_log_path(64) => 72 bytes
+# =========================================================================
+
+var ACFG_SZ = 72;
+
+fn acfg_strategy(p) { return load64(p); }
+fn acfg_confirm_sys(p) { return load64(p + 8); }
+fn acfg_confirm_rm(p) { return load64(p + 16); }
+fn acfg_auto_update(p) { return load64(p + 24); }
+fn acfg_color(p) { return load64(p + 32); }
+fn acfg_set_color(p, v) { store64(p + 32, v); }
+fn acfg_mkt_dir(p) { return load64(p + 40); }
+fn acfg_cache_dir(p) { return load64(p + 48); }
+fn acfg_db_path(p) { return load64(p + 56); }
+fn acfg_log_path(p) { return load64(p + 64); }
+
+fn ark_config_default() {
+    var p = alloc(ACFG_SZ);
+    store64(p, STRATEGY_SYSTEM_FIRST);
+    store64(p + 8, 1);
+    store64(p + 16, 1);
+    store64(p + 24, 0);
+    store64(p + 32, 1);
+    store64(p + 40, str_from("/var/lib/agnos/marketplace"));
+    store64(p + 48, str_from("/var/cache/agnos/ark"));
+    store64(p + 56, str_from(DEFAULT_PACKAGE_DB_PATH));
+    store64(p + 64, str_from(DEFAULT_TRANSACTION_LOG_PATH));
+    return p;
+}

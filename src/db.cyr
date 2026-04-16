@@ -1,0 +1,503 @@
+# =========================================================================
+# PackageDbEntry
+# Fields: name(0) version(8) source(16) installed_at(24) installed_by(32)
+#         size_bytes(40) checksum(48) files(56) dependencies(64)
+#         transaction_id(72) held(80) file_checksums(88)
+#         signature(96) signer_key_id(104)   => 112 bytes
+# =========================================================================
+
+var PDBE_SZ = 112;
+
+fn pdbe_name(p) { return load64(p); }
+fn pdbe_version(p) { return load64(p + 8); }
+fn pdbe_source(p) { return load64(p + 16); }
+fn pdbe_size(p) { return load64(p + 40); }
+fn pdbe_set_size(p, v) { store64(p + 40, v); }
+fn pdbe_checksum(p) { return load64(p + 48); }
+fn pdbe_set_checksum(p, v) { store64(p + 48, v); }
+fn pdbe_files(p) { return load64(p + 56); }
+fn pdbe_deps(p) { return load64(p + 64); }
+fn pdbe_held(p) { return load64(p + 80); }
+fn pdbe_set_held(p, v) { store64(p + 80, v); }
+fn pdbe_file_checksums(p) { return load64(p + 88); }
+fn pdbe_signature(p) { return load64(p + 96); }
+fn pdbe_set_signature(p, v) { store64(p + 96, v); }
+fn pdbe_signer(p) { return load64(p + 104); }
+fn pdbe_set_signer(p, v) { store64(p + 104, v); }
+
+fn db_entry_new(name, version, source) {
+    var p = alloc(PDBE_SZ);
+    store64(p, name);
+    store64(p + 8, version);
+    store64(p + 16, source);
+    store64(p + 24, syscall(201, 0));
+    store64(p + 32, str_from("root"));
+    store64(p + 40, 0);
+    store64(p + 48, str_from(""));
+    store64(p + 56, vec_new());
+    store64(p + 64, vec_new());
+    store64(p + 72, str_from(""));
+    store64(p + 80, 0);
+    store64(p + 88, map_new());
+    store64(p + 96, str_from(""));
+    store64(p + 104, str_from(""));
+    return p;
+}
+
+# =========================================================================
+# Per-file checksum management
+# =========================================================================
+
+# Record a file's SHA-256 hash in the per-file map
+fn pdbe_set_file_hash(entry, file_path, hash) {
+    map_set(pdbe_file_checksums(entry), str_data(file_path), hash);
+}
+
+# Get a file's expected hash (returns 0 if not found)
+fn pdbe_get_file_hash(entry, file_path) {
+    return map_get(pdbe_file_checksums(entry), str_data(file_path));
+}
+
+# Compute and store hashes for all files in the entry
+fn pdbe_compute_file_hashes(entry) {
+    sha256_global_init();
+    var fls = pdbe_files(entry);
+    var i = 0;
+    while (i < vec_len(fls)) {
+        var fpath = vec_get(fls, i);
+        var hash = hash_file(str_data(fpath));
+        if (hash > 0) {
+            pdbe_set_file_hash(entry, fpath, hash);
+        }
+        i = i + 1;
+    }
+}
+
+# =========================================================================
+# Package signing via sigil Ed25519
+# =========================================================================
+
+# Sign a package entry: hashes all files, signs the concatenated hash,
+# stores signature + key_id on the entry.
+fn pdbe_sign(entry, secret_key, key_id) {
+    ed25519_init();
+    sha256_global_init();
+    # Compute per-file hashes
+    pdbe_compute_file_hashes(entry);
+    # Build canonical string to sign: "name:version:hash1:hash2:..."
+    var sb = str_builder_new();
+    str_builder_add(sb, pdbe_name(entry));
+    str_builder_add_cstr(sb, ":");
+    str_builder_add(sb, pdbe_version(entry));
+    var fls = pdbe_files(entry);
+    var i = 0;
+    while (i < vec_len(fls)) {
+        str_builder_add_cstr(sb, ":");
+        var h = pdbe_get_file_hash(entry, vec_get(fls, i));
+        if (h > 0) { str_builder_add(sb, h); }
+        i = i + 1;
+    }
+    var msg = str_builder_build(sb);
+    # Decode secret key from hex if needed
+    var sig = sign_data(str_data(msg), str_len(msg), secret_key);
+    var sig_hex = hex_encode(sig, 64);
+    pdbe_set_signature(entry, str_from(sig_hex));
+    pdbe_set_signer(entry, key_id);
+    # Also set the legacy single checksum as the content hash
+    var content_hash = hash_data(str_data(msg), str_len(msg));
+    pdbe_set_checksum(entry, content_hash);
+}
+
+# Verify a package entry's signature against a public key.
+# Returns 1 if valid, 0 if invalid or unsigned.
+fn pdbe_verify(entry, public_key) {
+    ed25519_init();
+    sha256_global_init();
+    var sig_hex = pdbe_signature(entry);
+    if (str_len(sig_hex) == 0) { return 0; }
+    # Rebuild canonical message
+    var sb = str_builder_new();
+    str_builder_add(sb, pdbe_name(entry));
+    str_builder_add_cstr(sb, ":");
+    str_builder_add(sb, pdbe_version(entry));
+    var fls = pdbe_files(entry);
+    var i = 0;
+    while (i < vec_len(fls)) {
+        str_builder_add_cstr(sb, ":");
+        var h = pdbe_get_file_hash(entry, vec_get(fls, i));
+        if (h > 0) { str_builder_add(sb, h); }
+        else {
+            # Recompute from disk
+            var fpath = vec_get(fls, i);
+            var disk_hash = hash_file(str_data(fpath));
+            if (disk_hash > 0) { str_builder_add(sb, disk_hash); }
+        }
+        i = i + 1;
+    }
+    var msg = str_builder_build(sb);
+    var sig = hex_decode(str_data(sig_hex), str_len(sig_hex));
+    if (sig == 0) { return 0; }
+    return verify_data(str_data(msg), str_len(msg), sig, public_key);
+}
+
+# =========================================================================
+# PackageDb - hashmap-backed
+# Fields: packages(0) db_path(8)   => 16 bytes
+# =========================================================================
+
+var PDB_SZ = 16;
+
+fn pdb_map(p) { return load64(p); }
+fn pdb_path(p) { return load64(p + 8); }
+
+fn pkg_db_new() {
+    var p = alloc(PDB_SZ);
+    store64(p, map_new());
+    store64(p + 8, str_from(""));
+    return p;
+}
+
+fn pkg_db_load(path) {
+    var p = alloc(PDB_SZ);
+    store64(p, map_new());
+    store64(p + 8, path);
+    return p;
+}
+
+fn json_escape_str(sb, s) {
+    var d = str_data(s);
+    var n = str_len(s);
+    var i = 0;
+    while (i < n) {
+        # Find run of safe characters (no escaping needed)
+        var run_start = i;
+        while (i < n) {
+            var c = load8(d + i);
+            if (c == 34 || c == 92 || c < 32) { break; }
+            i = i + 1;
+        }
+        # Emit the safe run as a single Str slice (zero-copy)
+        if (i > run_start) {
+            str_builder_add(sb, str_new(d + run_start, i - run_start));
+        }
+        # Handle special character if we stopped on one
+        if (i < n) {
+            var c = load8(d + i);
+            if (c == 34) { str_builder_add_cstr(sb, "\\\""); }
+            elif (c == 92) { str_builder_add_cstr(sb, "\\\\"); }
+            elif (c == 10) { str_builder_add_cstr(sb, "\\n"); }
+            elif (c == 13) { str_builder_add_cstr(sb, "\\r"); }
+            elif (c == 9) { str_builder_add_cstr(sb, "\\t"); }
+            else { str_builder_add_cstr(sb, "\\u0000"); }
+            i = i + 1;
+        }
+    }
+}
+
+fn pkg_db_save(db) {
+    if (str_len(pdb_path(db)) == 0) { return 1; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"packages\":{");
+    var all = pkg_db_list(db);
+    var i = 0;
+    while (i < vec_len(all)) {
+        var entry = vec_get(all, i);
+        if (i > 0) { str_builder_add_cstr(sb, ","); }
+        str_builder_add_cstr(sb, "\"");
+        json_escape_str(sb, pdbe_name(entry));
+        str_builder_add_cstr(sb, "\":{\"name\":\"");
+        json_escape_str(sb, pdbe_name(entry));
+        str_builder_add_cstr(sb, "\",\"version\":\"");
+        json_escape_str(sb, pdbe_version(entry));
+        str_builder_add_cstr(sb, "\",\"source\":");
+        str_builder_add_int(sb, pdbe_source(entry));
+        str_builder_add_cstr(sb, ",\"size_bytes\":");
+        str_builder_add_int(sb, pdbe_size(entry));
+        str_builder_add_cstr(sb, ",\"held\":");
+        str_builder_add_int(sb, pdbe_held(entry));
+        # Signature fields
+        var sig = pdbe_signature(entry);
+        if (str_len(sig) > 0) {
+            str_builder_add_cstr(sb, ",\"signature\":\"");
+            json_escape_str(sb, sig);
+            str_builder_add_cstr(sb, "\",\"signer\":\"");
+            json_escape_str(sb, pdbe_signer(entry));
+            str_builder_add_cstr(sb, "\"");
+        }
+        str_builder_add_cstr(sb, "}");
+        i = i + 1;
+    }
+    str_builder_add_cstr(sb, "}}");
+    var json = str_builder_build(sb);
+    # Secure temp: random suffix, O_CREAT|O_EXCL|O_WRONLY, mode 0600
+    var tmp_sb = str_builder_new();
+    str_builder_add(tmp_sb, pdb_path(db));
+    str_builder_add_cstr(tmp_sb, ".tmp.");
+    str_builder_add_int(tmp_sb, syscall(SYS_GETPID));
+    var tmp_path = str_builder_build(tmp_sb);
+    var tmp_cstr = str_data(tmp_path);
+    # O_WRONLY(1) | O_CREAT(64) | O_EXCL(128) = 193, mode 0600 = 384
+    var fd = syscall(SYS_OPEN, tmp_cstr, 193, 384);
+    if (fd < 0) { return 0; }
+    syscall(SYS_WRITE, fd, str_data(json), str_len(json));
+    syscall(74, fd);
+    syscall(SYS_CLOSE, fd);
+    syscall(82, tmp_cstr, str_data(pdb_path(db)));
+    return 1;
+}
+
+fn pkg_db_register(db, entry) {
+    map_set(pdb_map(db), str_data(pdbe_name(entry)), entry);
+}
+
+fn pkg_db_unregister(db, name) {
+    var entry = map_get(pdb_map(db), str_data(name));
+    if (entry > 0) { map_delete(pdb_map(db), str_data(name)); return entry; }
+    return 0;
+}
+
+fn pkg_db_get(db, name) { return map_get(pdb_map(db), name); }
+fn pkg_db_is_installed(db, name) { return map_get(pdb_map(db), str_data(name)) > 0; }
+fn pkg_db_count(db) { return map_count(pdb_map(db)); }
+
+fn pkg_db_list(db) {
+    return map_values(pdb_map(db));
+}
+
+fn to_lower_byte(c) {
+    if (c >= 65 && c <= 90) { return c + 32; }
+    return c;
+}
+
+fn str_contains_icase(haystack, needle) {
+    var hd = str_data(haystack);
+    var hn = str_len(haystack);
+    var nd = str_data(needle);
+    var nn = str_len(needle);
+    if (nn == 0) { return 1; }
+    if (nn > hn) { return 0; }
+    var i = 0;
+    while (i <= hn - nn) {
+        var j = 0;
+        while (j < nn) {
+            if (to_lower_byte(load8(hd + i + j)) != to_lower_byte(load8(nd + j))) {
+                j = nn + 1;
+            } else { j = j + 1; }
+        }
+        if (j == nn) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn pkg_db_search(db, query) {
+    var result = vec_new();
+    var all = pkg_db_list(db);
+    var i = 0;
+    while (i < vec_len(all)) {
+        var entry = vec_get(all, i);
+        if (str_contains_icase(pdbe_name(entry), query)) { vec_push(result, entry); }
+        i = i + 1;
+    }
+    return result;
+}
+
+fn pkg_db_by_source(db, source) {
+    var result = vec_new();
+    var all = pkg_db_list(db);
+    var i = 0;
+    while (i < vec_len(all)) {
+        var entry = vec_get(all, i);
+        if (pdbe_source(entry) == source) { vec_push(result, entry); }
+        i = i + 1;
+    }
+    return result;
+}
+
+fn pkg_db_total_size(db) {
+    var total = 0;
+    var all = pkg_db_list(db);
+    var i = 0;
+    while (i < vec_len(all)) { total = total + pdbe_size(vec_get(all, i)); i = i + 1; }
+    return total;
+}
+
+# IntegrityIssue: [name(Str), type(i64), detail(Str)]
+# type: 0=NoFileManifest, 1=MissingFile, 2=ChecksumMismatch
+var ISSUE_NO_MANIFEST = 0;
+var ISSUE_MISSING_FILE = 1;
+var ISSUE_CHECKSUM_MISMATCH = 2;
+
+var IISSUE_SZ = 24;
+fn iissue_name(p) { return load64(p); }
+fn iissue_type(p) { return load64(p + 8); }
+fn iissue_detail(p) { return load64(p + 16); }
+
+fn integrity_issue(name, itype, detail) {
+    var p = alloc(IISSUE_SZ);
+    store64(p, name);
+    store64(p + 8, itype);
+    store64(p + 16, detail);
+    return p;
+}
+
+# Quick check: packages with empty file manifests (no disk I/O)
+fn pkg_db_check_integrity(db) {
+    var issues = vec_new();
+    var all = pkg_db_list(db);
+    var i = 0;
+    while (i < vec_len(all)) {
+        var entry = vec_get(all, i);
+        if (vec_len(pdbe_files(entry)) == 0) {
+            vec_push(issues, integrity_issue(
+                pdbe_name(entry), ISSUE_NO_MANIFEST, str_from("")));
+        }
+        i = i + 1;
+    }
+    return issues;
+}
+
+# Full check: verify files exist and checksums match (disk I/O)
+# If pkg_filter is non-empty, only check that package.
+fn pkg_db_check_integrity_full(db, pkg_filter) {
+    sha256_global_init();
+    var issues = vec_new();
+    var all = pkg_db_list(db);
+    var i = 0;
+    while (i < vec_len(all)) {
+        var entry = vec_get(all, i);
+        # Apply filter
+        if (str_len(pkg_filter) > 0) {
+            if (str_eq(pdbe_name(entry), pkg_filter) == 0) {
+                i = i + 1;
+                continue;
+            }
+        }
+        var fls = pdbe_files(entry);
+        if (vec_len(fls) == 0) {
+            vec_push(issues, integrity_issue(
+                pdbe_name(entry), ISSUE_NO_MANIFEST, str_from("")));
+            i = i + 1;
+            continue;
+        }
+        var j = 0;
+        while (j < vec_len(fls)) {
+            var fpath = vec_get(fls, j);
+            if (file_exists(str_data(fpath)) == 0) {
+                vec_push(issues, integrity_issue(
+                    pdbe_name(entry), ISSUE_MISSING_FILE, fpath));
+                j = j + 1;
+                continue;
+            }
+            # Check per-file hash first, fall back to legacy single checksum
+            var expected = pdbe_get_file_hash(entry, fpath);
+            if (expected == 0) { expected = pdbe_checksum(entry); }
+            if (expected > 0 && str_len(expected) > 0) {
+                var actual = hash_file(str_data(fpath));
+                if (actual > 0) {
+                    if (str_eq(actual, expected) == 0) {
+                        vec_push(issues, integrity_issue(
+                            pdbe_name(entry), ISSUE_CHECKSUM_MISMATCH,
+                            fpath));
+                    }
+                } else {
+                    vec_push(issues, integrity_issue(
+                        pdbe_name(entry), ISSUE_MISSING_FILE, fpath));
+                }
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return issues;
+}
+
+fn pkg_db_hold(db, name) {
+    var entry = pkg_db_get(db, str_data(name));
+    if (entry > 0) { pdbe_set_held(entry, 1); return 1; }
+    return 0;
+}
+
+fn pkg_db_unhold(db, name) {
+    var entry = pkg_db_get(db, str_data(name));
+    if (entry > 0) { pdbe_set_held(entry, 0); return 1; }
+    return 0;
+}
+
+fn pkg_db_held_packages(db) {
+    var result = vec_new();
+    var all = pkg_db_list(db);
+    var i = 0;
+    while (i < vec_len(all)) {
+        var entry = vec_get(all, i);
+        if (pdbe_held(entry)) { vec_push(result, entry); }
+        i = i + 1;
+    }
+    return result;
+}
+
+fn pkg_db_files_for(db, name) {
+    var entry = pkg_db_get(db, str_data(name));
+    if (entry > 0) { return pdbe_files(entry); }
+    return vec_new();
+}
+
+fn pkg_db_owner_of(db, file_path) {
+    var all = pkg_db_list(db);
+    var i = 0;
+    while (i < vec_len(all)) {
+        var entry = vec_get(all, i);
+        var j = 0;
+        var fls = pdbe_files(entry);
+        while (j < vec_len(fls)) {
+            if (str_eq(vec_get(fls, j), file_path)) { return pdbe_name(entry); }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return str_from("");
+}
+
+# Topological sort for dependency resolution
+fn resolve_visit(db, pkg, all, visited, visiting, order) {
+    var pkg_cstr = str_data(pkg);
+    if (map_has(visited, pkg_cstr)) { return 1; }
+    if (map_has(visiting, pkg_cstr)) { return 0; }
+    map_set(visiting, pkg_cstr, 1);
+    var entry = pkg_db_get(db, pkg_cstr);
+    if (entry > 0) {
+        var deps = pdbe_deps(entry);
+        var i = 0;
+        while (i < vec_len(deps)) {
+            var dep = vec_get(deps, i);
+            var j = 0;
+            var in_set = 0;
+            while (j < vec_len(all)) {
+                if (str_eq(vec_get(all, j), dep)) { in_set = 1; }
+                j = j + 1;
+            }
+            if (in_set) {
+                if (resolve_visit(db, dep, all, visited, visiting, order) == 0) { return 0; }
+            }
+            i = i + 1;
+        }
+    }
+    map_set(visiting, pkg_cstr, 0);
+    map_set(visited, pkg_cstr, 1);
+    vec_push(order, pkg);
+    return 1;
+}
+
+fn pkg_db_resolve_install_order(db, to_install) {
+    var order = vec_new();
+    var visited = map_new();
+    var visiting = map_new();
+    var i = 0;
+    while (i < vec_len(to_install)) {
+        if (resolve_visit(db, vec_get(to_install, i), to_install, visited, visiting, order) == 0) {
+            return Err(1);
+        }
+        i = i + 1;
+    }
+    return Ok(order);
+}

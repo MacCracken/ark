@@ -1,0 +1,338 @@
+# =========================================================================
+# TransactionOp
+# Fields: op_type(0) package(8) version(16) source(24) status(32)
+#         error(40) from_version(48)   => 56 bytes
+# =========================================================================
+
+enum TransactionOpTypeTag { OP_INSTALL = 0; OP_REMOVE = 1; OP_UPGRADE = 2; }
+enum TransactionOpStatusTag {
+    OP_STATUS_PENDING = 0;
+    OP_STATUS_IN_PROGRESS = 1;
+    OP_STATUS_COMPLETE = 2;
+    OP_STATUS_FAILED = 3;
+    OP_STATUS_ROLLED_BACK = 4;
+}
+
+var TOP_SZ = 56;
+
+fn top_type(p) { return load64(p); }
+fn top_pkg(p) { return load64(p + 8); }
+fn top_ver(p) { return load64(p + 16); }
+fn top_source(p) { return load64(p + 24); }
+fn top_status(p) { return load64(p + 32); }
+fn top_set_status(p, v) { store64(p + 32, v); }
+fn top_error(p) { return load64(p + 40); }
+fn top_set_error(p, v) { store64(p + 40, v); }
+fn top_from_ver(p) { return load64(p + 48); }
+fn top_set_from_ver(p, v) { store64(p + 48, v); }
+
+fn txn_op_new(op_type, package, version, source) {
+    var p = alloc(TOP_SZ);
+    store64(p, op_type);
+    store64(p + 8, package);
+    store64(p + 16, version);
+    store64(p + 24, source);
+    store64(p + 32, OP_STATUS_PENDING);
+    store64(p + 40, str_from(""));
+    store64(p + 48, str_from(""));
+    return p;
+}
+
+# =========================================================================
+# Transaction
+# Fields: id(0) started_at(8) completed_at(16) status(24)
+#         error_msg(32) operations(40) user(48)   => 56 bytes
+# =========================================================================
+
+enum TransactionStatusTag {
+    TXN_IN_PROGRESS = 0;
+    TXN_COMMITTED = 1;
+    TXN_ROLLED_BACK = 2;
+    TXN_FAILED = 3;
+}
+
+var TXN_SZ = 56;
+
+fn txn_id(p) { return load64(p); }
+fn txn_started(p) { return load64(p + 8); }
+fn txn_completed(p) { return load64(p + 16); }
+fn txn_set_completed(p, v) { store64(p + 16, v); }
+fn txn_status(p) { return load64(p + 24); }
+fn txn_set_status(p, v) { store64(p + 24, v); }
+fn txn_errmsg(p) { return load64(p + 32); }
+fn txn_set_errmsg(p, v) { store64(p + 32, v); }
+fn txn_ops(p) { return load64(p + 40); }
+fn txn_user(p) { return load64(p + 48); }
+
+fn txn_status_to_str(status, error_msg) {
+    if (status == TXN_IN_PROGRESS) { return str_from("in-progress"); }
+    if (status == TXN_COMMITTED) { return str_from("committed"); }
+    if (status == TXN_ROLLED_BACK) { return str_from("rolled-back"); }
+    if (status == TXN_FAILED) {
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "failed: ");
+        str_builder_add(sb, error_msg);
+        return str_builder_build(sb);
+    }
+    return str_from("unknown");
+}
+
+fn txn_new(id, user) {
+    var p = alloc(TXN_SZ);
+    store64(p, id);
+    store64(p + 8, syscall(201, 0));
+    store64(p + 16, 0);
+    store64(p + 24, TXN_IN_PROGRESS);
+    store64(p + 32, str_from(""));
+    store64(p + 40, vec_new());
+    store64(p + 48, user);
+    return p;
+}
+
+# =========================================================================
+# TransactionLog
+# Fields: transactions(0) next_id(8) log_path(16)   => 24 bytes
+# =========================================================================
+
+# Fields: transactions(0) next_id(8) log_path(16) index(24) => 32 bytes
+var TLOG_SZ = 32;
+
+fn tlog_txns(p) { return load64(p); }
+fn tlog_next(p) { return load64(p + 8); }
+fn tlog_set_next(p, v) { store64(p + 8, v); }
+fn tlog_path(p) { return load64(p + 16); }
+fn tlog_index(p) { return load64(p + 24); }
+
+fn txn_log_new() {
+    var p = alloc(TLOG_SZ);
+    store64(p, vec_new());
+    store64(p + 8, 0);
+    store64(p + 16, str_from(""));
+    store64(p + 24, map_new());
+    return p;
+}
+
+fn txn_log_load(path) {
+    var p = alloc(TLOG_SZ);
+    store64(p, vec_new());
+    store64(p + 8, 0);
+    store64(p + 16, path);
+    store64(p + 24, map_new());
+    var path_cstr = str_data(path);
+    var fd = syscall(SYS_OPEN, path_cstr, O_RDONLY, 0);
+    if (fd >= 0) {
+        syscall(SYS_CLOSE, fd);
+        var buf = alloc(65536);
+        var bytes = file_read_all(path_cstr, buf, 524288);
+        if (bytes > 0) {
+            var content = str_new(buf, bytes);
+            var lines = str_split(content, str_from("\n"));
+            var i = 0;
+            while (i < vec_len(lines)) {
+                var line = vec_get(lines, i);
+                if (str_len(line) > 2) {
+                    var pairs = json_parse(line);
+                    if (pairs > 0) {
+                        var id_val = json_get(pairs, "id");
+                        var user_val = json_get(pairs, "user");
+                        var status_val = json_get(pairs, "status");
+                        if (id_val > 0) {
+                            if (user_val == 0) { user_val = str_from("unknown"); }
+                            if (status_val == 0) { status_val = str_from(""); }
+                            var txn = txn_new(id_val, user_val);
+                            if (streq(str_data(status_val), "Committed")) {
+                                txn_set_status(txn, TXN_COMMITTED);
+                            }
+                            if (streq(str_data(status_val), "RolledBack")) {
+                                txn_set_status(txn, TXN_ROLLED_BACK);
+                            }
+                            if (str_starts_with(id_val, str_from("txn-"))) {
+                                var num_str = str_sub(id_val, 4, str_len(id_val) - 4);
+                                var num = str_to_int(num_str);
+                                if (num >= tlog_next(p)) { tlog_set_next(p, num); }
+                            }
+                            var idx_map = tlog_index(p);
+                            var txns = tlog_txns(p);
+                            var id_cstr = str_data(txn_id(txn));
+                            var existing_idx = map_get(idx_map, id_cstr);
+                            if (existing_idx > 0) {
+                                vec_set(txns, existing_idx - 1, txn);
+                            } else {
+                                vec_push(txns, txn);
+                                map_set(idx_map, id_cstr, vec_len(txns));
+                            }
+                        }
+                    }
+                }
+                i = i + 1;
+            }
+        }
+    }
+    return p;
+}
+
+fn txn_log_persist(log, txn) {
+    if (str_len(tlog_path(log)) == 0) { return 0; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"id\":\"");
+    json_escape_str(sb, txn_id(txn));
+    str_builder_add_cstr(sb, "\",\"status\":\"");
+    var st = txn_status(txn);
+    if (st == TXN_IN_PROGRESS) { str_builder_add_cstr(sb, "InProgress"); }
+    if (st == TXN_COMMITTED) { str_builder_add_cstr(sb, "Committed"); }
+    if (st == TXN_ROLLED_BACK) { str_builder_add_cstr(sb, "RolledBack"); }
+    if (st == TXN_FAILED) { str_builder_add_cstr(sb, "Failed"); }
+    str_builder_add_cstr(sb, "\",\"user\":\"");
+    json_escape_str(sb, txn_user(txn));
+    str_builder_add_cstr(sb, "\",\"ops\":");
+    str_builder_add_int(sb, vec_len(txn_ops(txn)));
+    str_builder_add_cstr(sb, "}\n");
+    var json_line = str_builder_build(sb);
+    # Use locked append to prevent concurrent write interleaving (H3)
+    # Locked append + fsync for crash safety
+    var lpath = str_data(tlog_path(log));
+    var lfd = file_open(lpath, O_WRONLY | O_CREAT | O_APPEND, 420);
+    if (lfd >= 0) {
+        file_lock(lfd);
+        file_write(lfd, str_data(json_line), str_len(json_line));
+        syscall(74, lfd);
+        file_unlock(lfd);
+        file_close(lfd);
+    }
+    return 1;
+}
+
+fn txn_log_begin(log, user) {
+    var nxt = tlog_next(log) + 1;
+    tlog_set_next(log, nxt);
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "txn-");
+    if (nxt < 10) { str_builder_add_cstr(sb, "00000"); }
+    elif (nxt < 100) { str_builder_add_cstr(sb, "0000"); }
+    elif (nxt < 1000) { str_builder_add_cstr(sb, "000"); }
+    elif (nxt < 10000) { str_builder_add_cstr(sb, "00"); }
+    elif (nxt < 100000) { str_builder_add_cstr(sb, "0"); }
+    str_builder_add_int(sb, nxt);
+    var id = str_builder_build(sb);
+    var txn = txn_new(id, user);
+    var txns = tlog_txns(log);
+    vec_push(txns, txn);
+    map_set(tlog_index(log), str_data(id), vec_len(txns));
+    return id;
+}
+
+fn txn_log_find(log, txn_id_str) {
+    var idx = map_get(tlog_index(log), str_data(txn_id_str));
+    if (idx > 0) { return idx - 1; }
+    return 0 - 1;
+}
+
+fn txn_log_add_op(log, tid, op) {
+    var idx = txn_log_find(log, tid);
+    if (idx < 0) { return 0; }
+    var t = vec_get(tlog_txns(log), idx);
+    if (txn_status(t) != TXN_IN_PROGRESS) { return 0; }
+    vec_push(txn_ops(t), op);
+    return 1;
+}
+
+fn txn_log_mark_op_complete(log, tid, package) {
+    var idx = txn_log_find(log, tid);
+    if (idx < 0) { return 0; }
+    var t = vec_get(tlog_txns(log), idx);
+    var ops = txn_ops(t);
+    var i = 0;
+    while (i < vec_len(ops)) {
+        var op = vec_get(ops, i);
+        if (str_eq(top_pkg(op), package)) { top_set_status(op, OP_STATUS_COMPLETE); return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn txn_log_mark_op_failed(log, tid, package, error) {
+    var idx = txn_log_find(log, tid);
+    if (idx < 0) { return 0; }
+    var t = vec_get(tlog_txns(log), idx);
+    var ops = txn_ops(t);
+    var i = 0;
+    while (i < vec_len(ops)) {
+        var op = vec_get(ops, i);
+        if (str_eq(top_pkg(op), package)) {
+            top_set_status(op, OP_STATUS_FAILED);
+            top_set_error(op, error);
+            return 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn txn_log_commit(log, tid) {
+    var idx = txn_log_find(log, tid);
+    if (idx < 0) { return 0; }
+    var t = vec_get(tlog_txns(log), idx);
+    if (txn_status(t) != TXN_IN_PROGRESS) { return 0; }
+    txn_set_status(t, TXN_COMMITTED);
+    txn_set_completed(t, syscall(201, 0));
+    txn_log_persist(log, t);
+    return 1;
+}
+
+fn txn_log_rollback(log, tid) {
+    var idx = txn_log_find(log, tid);
+    if (idx < 0) { return 0; }
+    var t = vec_get(tlog_txns(log), idx);
+    if (txn_status(t) != TXN_IN_PROGRESS) { return 0; }
+    var ops = txn_ops(t);
+    var i = 0;
+    while (i < vec_len(ops)) {
+        var op = vec_get(ops, i);
+        var s = top_status(op);
+        if (s == OP_STATUS_PENDING || s == OP_STATUS_IN_PROGRESS) {
+            top_set_status(op, OP_STATUS_ROLLED_BACK);
+        }
+        i = i + 1;
+    }
+    txn_set_status(t, TXN_ROLLED_BACK);
+    txn_set_completed(t, syscall(201, 0));
+    txn_log_persist(log, t);
+    return 1;
+}
+
+fn txn_log_fail(log, tid, error) {
+    var idx = txn_log_find(log, tid);
+    if (idx < 0) { return 0; }
+    var t = vec_get(tlog_txns(log), idx);
+    if (txn_status(t) != TXN_IN_PROGRESS) { return 0; }
+    txn_set_status(t, TXN_FAILED);
+    txn_set_errmsg(t, error);
+    txn_set_completed(t, syscall(201, 0));
+    txn_log_persist(log, t);
+    return 1;
+}
+
+fn txn_log_get(log, tid) {
+    var idx = txn_log_find(log, tid);
+    if (idx < 0) { return 0; }
+    return vec_get(tlog_txns(log), idx);
+}
+
+fn txn_log_recent(log, count) {
+    var result = vec_new();
+    var txns = tlog_txns(log);
+    var total = vec_len(txns);
+    if (total == 0) { return result; }
+    var i = total - 1;
+    var added = 0;
+    while (added < count && i >= 0) {
+        vec_push(result, vec_get(txns, i));
+        added = added + 1;
+        if (i == 0) { return result; }
+        i = i - 1;
+    }
+    return result;
+}
+
+fn txn_log_len(log) { return vec_len(tlog_txns(log)); }
+fn txn_log_is_empty(log) { return vec_len(tlog_txns(log)) == 0; }

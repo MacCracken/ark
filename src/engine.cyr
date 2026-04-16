@@ -1,0 +1,497 @@
+# =========================================================================
+# NousResolver stub
+# Fields: marketplace_dir(0) cache_dir(8) strategy(16) => 24 bytes
+# =========================================================================
+
+var NRES_SZ = 24;
+
+fn nous_resolver_new(mkt_dir, cache_dir) {
+    var p = alloc(NRES_SZ);
+    store64(p, mkt_dir);
+    store64(p + 8, cache_dir);
+    store64(p + 16, STRATEGY_SYSTEM_FIRST);
+    return p;
+}
+
+fn nous_resolve(r, name) { return 0; }
+fn nous_search(r, query) { return vec_new(); }
+fn nous_list_installed(r) { return vec_new(); }
+fn nous_check_updates(r) { return vec_new(); }
+fn nous_is_marketplace_package(r, name) { return 0; }
+fn nous_is_system_package(r, name) { return 0; }
+
+# =========================================================================
+# Group meta-package mappings
+# =========================================================================
+
+# Validate package name: [a-zA-Z0-9][a-zA-Z0-9._-]*, max 128 chars
+fn validate_pkg_name(name) {
+    var d = str_data(name);
+    var n = str_len(name);
+    if (n == 0 || n > 128) { return 0; }
+    # First char must be alphanumeric
+    var c = load8(d);
+    if (c < 48) { return 0; }
+    if (c > 57 && c < 65) { return 0; }
+    if (c > 90 && c < 97) { return 0; }
+    if (c > 122) { return 0; }
+    var i = 1;
+    while (i < n) {
+        c = load8(d + i);
+        # Allow: 0-9 A-Z a-z . _ -
+        if (c == 46 || c == 95 || c == 45) { i = i + 1; }
+        elif (c >= 48 && c <= 57) { i = i + 1; }
+        elif (c >= 65 && c <= 90) { i = i + 1; }
+        elif (c >= 97 && c <= 122) { i = i + 1; }
+        else { return 0; }
+    }
+    # Reject path traversal
+    if (str_contains(name, str_from(".."))) { return 0; }
+    if (str_contains(name, str_from("/"))) { return 0; }
+    return 1;
+}
+
+fn group_meta_package(group) {
+    if (streq(group, "desktop")) { return "agnos-desktop"; }
+    if (streq(group, "ai")) { return "agnos-ai"; }
+    if (streq(group, "ml")) { return "agnos-ai"; }
+    if (streq(group, "shell")) { return "agnoshi"; }
+    if (streq(group, "edge")) { return "agnos-edge-agent"; }
+    if (streq(group, "iot")) { return "agnos-edge-agent"; }
+    return 0;
+}
+
+# =========================================================================
+# ArkPackageManager
+# Fields: config(0) resolver(8) package_db(16) transaction_log(24) => 32 bytes
+# =========================================================================
+
+var AMGR_SZ = 32;
+
+fn amgr_config(p) { return load64(p); }
+fn amgr_resolver(p) { return load64(p + 8); }
+fn amgr_db(p) { return load64(p + 16); }
+fn amgr_log(p) { return load64(p + 24); }
+
+fn ark_mgr_new(config) {
+    var p = alloc(AMGR_SZ);
+    store64(p, config);
+    var r = nous_resolver_new(acfg_mkt_dir(config), acfg_cache_dir(config));
+    store64(r + 16, acfg_strategy(config));
+    store64(p + 8, r);
+    store64(p + 16, pkg_db_load(acfg_db_path(config)));
+    store64(p + 24, txn_log_load(acfg_log_path(config)));
+    return p;
+}
+
+# =========================================================================
+# ArkPackageManager methods
+# =========================================================================
+
+fn ark_execute(mgr, cmd) {
+    var tag = acmd_tag(cmd);
+    if (tag == CMD_INSTALL) { return ark_install(mgr, acmd_packages(cmd), acmd_force(cmd)); }
+    if (tag == CMD_GROUP_INSTALL) {
+        var meta = group_meta_package(str_data(acmd_group(cmd)));
+        if (meta == 0) { meta = str_data(acmd_group(cmd)); }
+        var pkgs = vec_new();
+        vec_push(pkgs, str_from(meta));
+        return ark_install(mgr, pkgs, acmd_force(cmd));
+    }
+    if (tag == CMD_REMOVE) { return ark_remove(mgr, acmd_packages(cmd), acmd_purge(cmd)); }
+    if (tag == CMD_SEARCH) {
+        var out = ark_search(mgr, acmd_query(cmd), acmd_source(cmd));
+        return ark_result_new(1, ark_output_to_display_string(out), vec_new(), SOURCE_UNKNOWN);
+    }
+    if (tag == CMD_LIST) {
+        var out = ark_list(mgr, acmd_source(cmd));
+        return ark_result_new(1, ark_output_to_display_string(out), vec_new(), SOURCE_UNKNOWN);
+    }
+    if (tag == CMD_INFO) {
+        var out = ark_info(mgr, acmd_package(cmd));
+        var pkgs = vec_new(); vec_push(pkgs, acmd_package(cmd));
+        return ark_result_new(1, ark_output_to_display_string(out), pkgs, SOURCE_UNKNOWN);
+    }
+    if (tag == CMD_UPDATE) {
+        var out = ark_update(mgr);
+        return ark_result_new(1, ark_output_to_display_string(out), vec_new(), SOURCE_UNKNOWN);
+    }
+    if (tag == CMD_UPGRADE) { return ark_upgrade(mgr, acmd_packages(cmd)); }
+    if (tag == CMD_STATUS) {
+        var out = ark_status(mgr);
+        return ark_result_new(1, ark_output_to_display_string(out), vec_new(), SOURCE_UNKNOWN);
+    }
+    if (tag == CMD_HOLD) { return ark_hold(mgr, acmd_packages(cmd)); }
+    if (tag == CMD_UNHOLD) { return ark_unhold(mgr, acmd_packages(cmd)); }
+    if (tag == CMD_VERIFY) {
+        var out = ark_verify(mgr, acmd_package(cmd));
+        return ark_result_new(1, ark_output_to_display_string(out), vec_new(), SOURCE_UNKNOWN);
+    }
+    if (tag == CMD_HISTORY) {
+        var out = ark_history(mgr, acmd_count(cmd));
+        return ark_result_new(1, ark_output_to_display_string(out), vec_new(), SOURCE_UNKNOWN);
+    }
+    return ark_result_new(0, str_from("Unknown command"), vec_new(), SOURCE_UNKNOWN);
+}
+
+fn ark_install(mgr, packages, force) {
+    if (vec_len(packages) == 0) {
+        return ark_result_new(0, str_from("No packages specified"), vec_new(), SOURCE_UNKNOWN);
+    }
+    var plan = ark_plan_install(mgr, packages);
+    var steps = iplan_steps(plan);
+    var primary = SOURCE_UNKNOWN;
+    if (vec_len(steps) > 0) {
+        var first_tag = istep_tag(vec_get(steps, 0));
+        if (first_tag == STEP_SYSTEM_INSTALL) { primary = SOURCE_SYSTEM; }
+        if (first_tag == STEP_MARKETPLACE_INSTALL) { primary = SOURCE_MARKETPLACE; }
+        if (first_tag == STEP_FLUTTER_INSTALL) { primary = SOURCE_FLUTTER_APP; }
+    }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "Install plan (");
+    str_builder_add_int(sb, vec_len(steps));
+    str_builder_add_cstr(sb, " steps): ");
+    var i = 0;
+    while (i < vec_len(steps)) {
+        var st = vec_get(steps, i);
+        if (i > 0) { str_builder_add_cstr(sb, "; "); }
+        var stag = istep_tag(st);
+        if (stag == STEP_SYSTEM_INSTALL) {
+            str_builder_add_cstr(sb, "apt-get install -y ");
+            str_builder_add(sb, istep_pkg(st));
+        }
+        if (stag == STEP_MARKETPLACE_INSTALL) {
+            str_builder_add_cstr(sb, "marketplace install ");
+            str_builder_add(sb, istep_pkg(st));
+        }
+        if (stag == STEP_FLUTTER_INSTALL) {
+            str_builder_add_cstr(sb, "agpkg install ");
+            str_builder_add(sb, istep_pkg(st));
+        }
+        i = i + 1;
+    }
+    return ark_result_new(1, str_builder_build(sb), packages, primary);
+}
+
+fn ark_remove(mgr, packages, purge) {
+    if (vec_len(packages) == 0) {
+        return ark_result_new(0, str_from("No packages specified"), vec_new(), SOURCE_UNKNOWN);
+    }
+    var plan = ark_plan_remove(mgr, packages, purge);
+    var steps = iplan_steps(plan);
+    var primary = SOURCE_UNKNOWN;
+    if (vec_len(steps) > 0) {
+        var first_tag = istep_tag(vec_get(steps, 0));
+        if (first_tag == STEP_SYSTEM_REMOVE) { primary = SOURCE_SYSTEM; }
+        if (first_tag == STEP_MARKETPLACE_REMOVE) { primary = SOURCE_MARKETPLACE; }
+        if (first_tag == STEP_FLUTTER_REMOVE) { primary = SOURCE_FLUTTER_APP; }
+    }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "Remove plan (");
+    str_builder_add_int(sb, vec_len(steps));
+    str_builder_add_cstr(sb, " steps)");
+    return ark_result_new(1, str_builder_build(sb), packages, primary);
+}
+
+fn ark_search(mgr, query, source_filter) {
+    var output = ark_output_new();
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "Search: ");
+    str_builder_add(sb, query);
+    ark_output_add(output, output_line_header(str_builder_build(sb)));
+    var results = nous_search(amgr_resolver(mgr), query);
+    if (vec_len(results) == 0) {
+        ark_output_add(output, output_line_warning(str_from("No packages found")));
+    }
+    ark_output_add(output, output_line_separator());
+    var csb = str_builder_new();
+    str_builder_add_int(csb, vec_len(results));
+    str_builder_add_cstr(csb, " result(s)");
+    ark_output_add(output, output_line_info(str_from("Total"), str_builder_build(csb)));
+    return output;
+}
+
+fn ark_list(mgr, source_filter) {
+    var output = ark_output_new();
+    if (source_filter >= 0) {
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "Installed packages [");
+        str_builder_add_cstr(sb, source_to_str(source_filter));
+        str_builder_add_cstr(sb, "]");
+        ark_output_add(output, output_line_header(str_builder_build(sb)));
+    } else {
+        ark_output_add(output, output_line_header(str_from("Installed packages")));
+    }
+    var packages = nous_list_installed(amgr_resolver(mgr));
+    if (vec_len(packages) == 0) {
+        ark_output_add(output, output_line_warning(str_from("No packages installed")));
+    }
+    ark_output_add(output, output_line_separator());
+    var csb = str_builder_new();
+    str_builder_add_int(csb, vec_len(packages));
+    str_builder_add_cstr(csb, " package(s)");
+    ark_output_add(output, output_line_info(str_from("Total"), str_builder_build(csb)));
+    return output;
+}
+
+fn ark_info(mgr, package) {
+    var output = ark_output_new();
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "Package: ");
+    str_builder_add(sb, package);
+    ark_output_add(output, output_line_header(str_builder_build(sb)));
+    var resolved = nous_resolve(amgr_resolver(mgr), package);
+    if (resolved == 0) {
+        var wsb = str_builder_new();
+        str_builder_add_cstr(wsb, "Package '");
+        str_builder_add(wsb, package);
+        str_builder_add_cstr(wsb, "' not found in any source");
+        ark_output_add(output, output_line_warning(str_builder_build(wsb)));
+    }
+    return output;
+}
+
+fn ark_update(mgr) {
+    var output = ark_output_new();
+    ark_output_add(output, output_line_header(str_from("Update check")));
+    var updates = nous_check_updates(amgr_resolver(mgr));
+    if (vec_len(updates) == 0) {
+        ark_output_add(output, output_line_success(str_from("All packages up to date")));
+    }
+    ark_output_add(output, output_line_separator());
+    var sb = str_builder_new();
+    str_builder_add_int(sb, vec_len(updates));
+    ark_output_add(output, output_line_info(str_from("Updates available"), str_builder_build(sb)));
+    return output;
+}
+
+fn ark_upgrade(mgr, packages) {
+    var updates = nous_check_updates(amgr_resolver(mgr));
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "Upgrade plan: ");
+    str_builder_add_int(sb, vec_len(updates));
+    str_builder_add_cstr(sb, " package(s) to upgrade");
+    return ark_result_new(1, str_builder_build(sb), vec_new(), SOURCE_UNKNOWN);
+}
+
+fn ark_status(mgr) {
+    var cfg = amgr_config(mgr);
+    var output = ark_output_new();
+    ark_output_add(output, output_line_header(str_from("ark status")));
+    ark_output_add(output, output_line_info(str_from("Version"), str_from(ARK_VERSION_STR)));
+    ark_output_add(output, output_line_info(str_from("Strategy"), str_from(strategy_to_str(acfg_strategy(cfg)))));
+    ark_output_add(output, output_line_info(str_from("Marketplace dir"), acfg_mkt_dir(cfg)));
+    ark_output_add(output, output_line_info(str_from("Cache dir"), acfg_cache_dir(cfg)));
+    ark_output_add(output, output_line_separator());
+    ark_output_add(output, output_line_info(str_from("Sources"), str_from("system (apt), marketplace, flutter")));
+    ark_output_add(output, output_line_info(str_from("System packages"), str_from("0")));
+    ark_output_add(output, output_line_info(str_from("Marketplace packages"), str_from("0")));
+    ark_output_add(output, output_line_info(str_from("Flutter apps"), str_from("0")));
+    ark_output_add(output, output_line_success(str_from("ark is operational")));
+    return output;
+}
+
+fn ark_hold(mgr, packages) {
+    var affected = vec_new();
+    var i = 0;
+    while (i < vec_len(packages)) {
+        var name = vec_get(packages, i);
+        if (pkg_db_hold(amgr_db(mgr), name)) { vec_push(affected, name); }
+        i = i + 1;
+    }
+    pkg_db_save(amgr_db(mgr));
+    var sb = str_builder_new();
+    str_builder_add_int(sb, vec_len(affected));
+    str_builder_add_cstr(sb, " package(s) held");
+    return ark_result_new(1, str_builder_build(sb), affected, SOURCE_UNKNOWN);
+}
+
+fn ark_unhold(mgr, packages) {
+    var affected = vec_new();
+    var i = 0;
+    while (i < vec_len(packages)) {
+        var name = vec_get(packages, i);
+        if (pkg_db_unhold(amgr_db(mgr), name)) { vec_push(affected, name); }
+        i = i + 1;
+    }
+    pkg_db_save(amgr_db(mgr));
+    var sb = str_builder_new();
+    str_builder_add_int(sb, vec_len(affected));
+    str_builder_add_cstr(sb, " package(s) unheld");
+    return ark_result_new(1, str_builder_build(sb), affected, SOURCE_UNKNOWN);
+}
+
+fn ark_verify(mgr, package) {
+    var issues = pkg_db_check_integrity_full(amgr_db(mgr), package);
+    var output = ark_output_new();
+    if (str_len(package) > 0) {
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "Integrity check: ");
+        str_builder_add(sb, package);
+        ark_output_add(output, output_line_header(str_builder_build(sb)));
+    } else {
+        ark_output_add(output, output_line_header(str_from("Integrity check: all packages")));
+    }
+    if (vec_len(issues) == 0) {
+        ark_output_add(output, output_line_success(str_from("No integrity issues found")));
+    } else {
+        var i = 0;
+        while (i < vec_len(issues)) {
+            var issue = vec_get(issues, i);
+            var sb = str_builder_new();
+            str_builder_add(sb, iissue_name(issue));
+            str_builder_add_cstr(sb, ": ");
+            var it = iissue_type(issue);
+            if (it == ISSUE_NO_MANIFEST) {
+                str_builder_add_cstr(sb, "no file manifest");
+            }
+            if (it == ISSUE_MISSING_FILE) {
+                str_builder_add_cstr(sb, "missing file: ");
+                str_builder_add(sb, iissue_detail(issue));
+            }
+            if (it == ISSUE_CHECKSUM_MISMATCH) {
+                str_builder_add_cstr(sb, "checksum mismatch: ");
+                str_builder_add(sb, iissue_detail(issue));
+            }
+            ark_output_add(output, output_line_warning(str_builder_build(sb)));
+            i = i + 1;
+        }
+    }
+    ark_output_add(output, output_line_separator());
+    var csb = str_builder_new();
+    str_builder_add_int(csb, vec_len(issues));
+    ark_output_add(output, output_line_info(str_from("Issues found"), str_builder_build(csb)));
+    return output;
+}
+
+fn ark_history(mgr, count) {
+    var n = 10;
+    if (count >= 0) { n = count; }
+    var recent = txn_log_recent(amgr_log(mgr), n);
+    var output = ark_output_new();
+    var hsb = str_builder_new();
+    str_builder_add_cstr(hsb, "Transaction history (last ");
+    str_builder_add_int(hsb, n);
+    str_builder_add_cstr(hsb, ")");
+    ark_output_add(output, output_line_header(str_builder_build(hsb)));
+    if (vec_len(recent) == 0) {
+        ark_output_add(output, output_line_warning(str_from("No transactions recorded")));
+    } else {
+        var i = 0;
+        while (i < vec_len(recent)) {
+            var t = vec_get(recent, i);
+            var vsb = str_builder_new();
+            str_builder_add(vsb, txn_status_to_str(txn_status(t), txn_errmsg(t)));
+            str_builder_add_cstr(vsb, " | ");
+            str_builder_add(vsb, txn_user(t));
+            str_builder_add_cstr(vsb, " | ");
+            str_builder_add_int(vsb, vec_len(txn_ops(t)));
+            str_builder_add_cstr(vsb, " ops");
+            ark_output_add(output, output_line_info(txn_id(t), str_builder_build(vsb)));
+            i = i + 1;
+        }
+    }
+    ark_output_add(output, output_line_separator());
+    var tsb = str_builder_new();
+    str_builder_add_int(tsb, txn_log_len(amgr_log(mgr)));
+    ark_output_add(output, output_line_info(str_from("Total transactions"), str_builder_build(tsb)));
+    return output;
+}
+
+fn ark_plan_install(mgr, packages) {
+    var plan = install_plan_new();
+    var steps = iplan_steps(plan);
+    var i = 0;
+    while (i < vec_len(packages)) {
+        var pkg_name = vec_get(packages, i);
+        vec_push(steps, step_system_install(pkg_name, str_from("")));
+        iplan_set_root(plan, 1);
+        i = i + 1;
+    }
+    return plan;
+}
+
+fn ark_plan_remove(mgr, packages, purge) {
+    var plan = install_plan_new();
+    var steps = iplan_steps(plan);
+    var i = 0;
+    while (i < vec_len(packages)) {
+        var pkg_name = vec_get(packages, i);
+        vec_push(steps, step_system_remove(pkg_name, purge));
+        iplan_set_root(plan, 1);
+        i = i + 1;
+    }
+    return plan;
+}
+
+fn ark_format_plan(plan) {
+    var output = ark_output_new();
+    ark_output_add(output, output_line_header(str_from("Execution plan")));
+    var steps = iplan_steps(plan);
+    if (vec_len(steps) == 0) {
+        ark_output_add(output, output_line_warning(str_from("No steps in plan")));
+        return output;
+    }
+    var i = 0;
+    while (i < vec_len(steps)) {
+        var st = vec_get(steps, i);
+        var sb = str_builder_new();
+        str_builder_add_int(sb, i + 1);
+        str_builder_add_cstr(sb, ". ");
+        var stag = istep_tag(st);
+        if (stag == STEP_SYSTEM_INSTALL) {
+            str_builder_add_cstr(sb, "apt-get install ");
+            str_builder_add(sb, istep_pkg(st));
+            if (str_len(istep_ver(st)) > 0) {
+                str_builder_add_cstr(sb, " (");
+                str_builder_add(sb, istep_ver(st));
+                str_builder_add_cstr(sb, ")");
+            } else { str_builder_add_cstr(sb, " (latest)"); }
+        }
+        if (stag == STEP_SYSTEM_REMOVE) {
+            if (istep_purge(st)) { str_builder_add_cstr(sb, "apt-get purge "); }
+            else { str_builder_add_cstr(sb, "apt-get remove "); }
+            str_builder_add(sb, istep_pkg(st));
+        }
+        if (stag == STEP_MARKETPLACE_INSTALL) {
+            str_builder_add_cstr(sb, "marketplace install ");
+            str_builder_add(sb, istep_pkg(st));
+            if (str_len(istep_ver(st)) > 0) {
+                str_builder_add_cstr(sb, " (");
+                str_builder_add(sb, istep_ver(st));
+                str_builder_add_cstr(sb, ")");
+            } else { str_builder_add_cstr(sb, " (latest)"); }
+        }
+        if (stag == STEP_MARKETPLACE_REMOVE) {
+            str_builder_add_cstr(sb, "marketplace remove ");
+            str_builder_add(sb, istep_pkg(st));
+        }
+        if (stag == STEP_FLUTTER_INSTALL) {
+            str_builder_add_cstr(sb, "agpkg install ");
+            str_builder_add(sb, istep_pkg(st));
+            if (str_len(istep_ver(st)) > 0) {
+                str_builder_add_cstr(sb, " (");
+                str_builder_add(sb, istep_ver(st));
+                str_builder_add_cstr(sb, ")");
+            } else { str_builder_add_cstr(sb, " (latest)"); }
+        }
+        if (stag == STEP_FLUTTER_REMOVE) {
+            str_builder_add_cstr(sb, "agpkg remove ");
+            str_builder_add(sb, istep_pkg(st));
+        }
+        if (stag == STEP_SYSTEM_UPDATE) { str_builder_add_cstr(sb, "apt-get update"); }
+        ark_output_add(output, output_line_info(str_from("Step"), str_builder_build(sb)));
+        i = i + 1;
+    }
+    ark_output_add(output, output_line_separator());
+    if (iplan_root(plan)) {
+        ark_output_add(output, output_line_info(str_from("Requires root"), str_from("true")));
+    } else {
+        ark_output_add(output, output_line_info(str_from("Requires root"), str_from("false")));
+    }
+    var ssb = str_builder_new();
+    str_builder_add_int(ssb, iplan_size(plan));
+    str_builder_add_cstr(ssb, " bytes");
+    ark_output_add(output, output_line_info(str_from("Estimated size"), str_builder_build(ssb)));
+    return output;
+}
