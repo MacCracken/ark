@@ -36,7 +36,10 @@ jobs:
         run: cyrius deps
 
       - name: Lint
-        run: cyrius lint src/main.cyr
+        run: |
+          for f in src/types.cyr src/output.cyr src/transaction.cyr src/db.cyr src/engine.cyr src/recipe.cyr src/cli.cyr; do
+            cyrius lint "$f"
+          done
 
       - name: Build
         run: |

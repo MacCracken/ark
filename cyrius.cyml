@@ -15,10 +15,11 @@ defines = ["ARK_MAIN"]
 stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "args", "assert", "hashmap", "tagged", "toml", "json", "fs", "fnptr", "callback", "bench", "regex", "freelist", "bigint", "chrono", "process"]
 
 [deps.sigil]
-path = "../sigil"
+git = "https://github.com/MacCracken/sigil.git"
+tag = "2.1.2"
 modules = ["dist/sigil.cyr"]
 
 [deps.nous]
-path = "../nous"
+git = "https://github.com/MacCracken/nous.git"
 tag = "1.0.1"
 modules = ["src/nous.cyr"]
