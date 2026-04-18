@@ -7,6 +7,7 @@ include "src/transaction.cyr"
 include "src/db.cyr"
 include "src/engine.cyr"
 include "src/recipe.cyr"
+include "src/bazaar.cyr"
 include "src/cli.cyr"
 
 # =========================================================================

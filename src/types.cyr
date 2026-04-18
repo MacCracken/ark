@@ -86,6 +86,7 @@ enum ArkCommandTag {
     CMD_ROLLBACK = 15;
     CMD_BACKUP = 16;
     CMD_RESTORE = 17;
+    CMD_BAZAAR = 18;
 }
 
 var ACMD_SZ = 72;

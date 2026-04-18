@@ -174,9 +174,29 @@ fn parse_args(ac, av) {
         else { println("restore requires a backup path"); return 0; }
         return c;
     }
+    if (streq(command, "bazaar") || streq(command, "baz")) {
+        var c = ark_cmd_new(CMD_BAZAAR);
+        var bi = cmd_idx + 1;
+        if (ac > bi) {
+            acmd_set_group(c, str_from(argv(bi)));
+            # Remaining args become the query
+            var parts = vec_new();
+            var qi = bi + 1;
+            while (qi < ac) {
+                vec_push(parts, str_from(argv(qi)));
+                qi = qi + 1;
+            }
+            if (vec_len(parts) > 0) {
+                acmd_set_query(c, str_join(parts, str_from(" ")));
+            }
+        } else {
+            acmd_set_group(c, str_from("list"));
+        }
+        return c;
+    }
     println("Unknown command. Available: install, remove, search, list, info,");
-    println("  update, upgrade, status, hold, unhold, verify, history, pin, unpin,");
-    println("  rollback, backup, restore");
+    println("  update, upgrade, status, hold, unhold, verify, history,");
+    println("  pin, unpin, rollback, backup, restore, bazaar");
     return 0;
 }
 

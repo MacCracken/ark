@@ -1,0 +1,242 @@
+# ark/bazaar.cyr - community recipe repository integration
+#
+# Bazaar is the community recipe overlay for AGNOS. Recipes live in
+# categorized directories (ai/, editors/, tools/, etc.) as .cyml files.
+# This module scans, indexes, and searches bazaar recipes.
+
+var BAZAAR_PATH = "/usr/share/bazaar/recipes";
+var BAZAAR_CATEGORIES = 0;
+
+fn bazaar_init_categories() {
+    if (BAZAAR_CATEGORIES != 0) { return 0; }
+    BAZAAR_CATEGORIES = vec_new();
+    vec_push(BAZAAR_CATEGORIES, str_from("ai"));
+    vec_push(BAZAAR_CATEGORIES, str_from("desktops"));
+    vec_push(BAZAAR_CATEGORIES, str_from("editors"));
+    vec_push(BAZAAR_CATEGORIES, str_from("games"));
+    vec_push(BAZAAR_CATEGORIES, str_from("media"));
+    vec_push(BAZAAR_CATEGORIES, str_from("networking"));
+    vec_push(BAZAAR_CATEGORIES, str_from("security"));
+    vec_push(BAZAAR_CATEGORIES, str_from("tools"));
+}
+
+# =========================================================================
+# BazaarDb: indexed collection of all bazaar recipes
+# Fields: recipes(0) by_name(8) path(16)   => 24 bytes
+# =========================================================================
+
+var BDB_SZ = 24;
+
+fn bdb_recipes(p) { return load64(p); }
+fn bdb_index(p) { return load64(p + 8); }
+fn bdb_path(p) { return load64(p + 16); }
+
+fn bazaar_db_load(base_path) {
+    var db = alloc(BDB_SZ);
+    store64(db, vec_new());
+    store64(db + 8, map_new());
+    store64(db + 16, base_path);
+
+    bazaar_init_categories();
+    var i = 0;
+    while (i < vec_len(BAZAAR_CATEGORIES)) {
+        var cat = vec_get(BAZAAR_CATEGORIES, i);
+        var cat_path = str_builder_new();
+        str_builder_add(cat_path, base_path);
+        str_builder_add_cstr(cat_path, "/");
+        str_builder_add(cat_path, cat);
+        var dir = str_builder_build(cat_path);
+
+        if (file_exists(str_data(dir))) {
+            var recipes = recipe_scan_dir(dir);
+            var j = 0;
+            while (j < vec_len(recipes)) {
+                var r = vec_get(recipes, j);
+                var name = recipe_name(r);
+                if (name > 0 && str_len(name) > 0) {
+                    vec_push(bdb_recipes(db), r);
+                    map_set(bdb_index(db), str_data(name), r);
+                }
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return db;
+}
+
+fn bazaar_db_count(db) { return vec_len(bdb_recipes(db)); }
+
+fn bazaar_db_get(db, name) {
+    return map_get(bdb_index(db), str_data(name));
+}
+
+fn bazaar_db_search(db, query) {
+    var results = vec_new();
+    var all = bdb_recipes(db);
+    var i = 0;
+    while (i < vec_len(all)) {
+        var r = vec_get(all, i);
+        var name = recipe_name(r);
+        var desc = recipe_desc(r);
+        if (str_contains_icase(name, query)) { vec_push(results, r); }
+        elif (desc > 0 && str_contains_icase(desc, query)) {
+            vec_push(results, r);
+        }
+        i = i + 1;
+    }
+    return results;
+}
+
+fn bazaar_db_list_category(db, category) {
+    var results = vec_new();
+    var all = bdb_recipes(db);
+    var i = 0;
+    while (i < vec_len(all)) {
+        var r = vec_get(all, i);
+        var groups = recipe_groups(r);
+        var j = 0;
+        while (j < vec_len(groups)) {
+            if (str_eq(vec_get(groups, j), category)) {
+                vec_push(results, r);
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return results;
+}
+
+# =========================================================================
+# Bazaar CLI handlers
+# =========================================================================
+
+fn ark_bazaar(mgr, subcmd, query) {
+    var bpath = str_from(BAZAAR_PATH);
+    # Also check local dev path
+    if (file_exists(str_data(bpath)) == 0) {
+        bpath = str_from("../bazaar/recipes");
+    }
+    if (file_exists(str_data(bpath)) == 0) {
+        return ark_result_new(0,
+            str_from("Bazaar not found. Install bazaar or set path."),
+            vec_new(), SOURCE_COMMUNITY);
+    }
+
+    var bdb = bazaar_db_load(bpath);
+    var output = ark_output_new();
+
+    if (streq(str_data(subcmd), "search")) {
+        var hsb = str_builder_new();
+        str_builder_add_cstr(hsb, "Bazaar search: ");
+        str_builder_add(hsb, query);
+        ark_output_add(output, output_line_header(str_builder_build(hsb)));
+        var results = bazaar_db_search(bdb, query);
+        if (vec_len(results) == 0) {
+            ark_output_add(output, output_line_warning(
+                str_from("No community packages found")));
+        } else {
+            var i = 0;
+            while (i < vec_len(results)) {
+                var r = vec_get(results, i);
+                var desc = recipe_desc(r);
+                if (desc == 0) { desc = str_from(""); }
+                ark_output_add(output, output_line_package(
+                    recipe_name(r), recipe_version(r),
+                    SOURCE_COMMUNITY, desc));
+                i = i + 1;
+            }
+        }
+        ark_output_add(output, output_line_separator());
+        var csb = str_builder_new();
+        str_builder_add_int(csb, vec_len(results));
+        str_builder_add_cstr(csb, " result(s) from ");
+        str_builder_add_int(csb, bazaar_db_count(bdb));
+        str_builder_add_cstr(csb, " community packages");
+        ark_output_add(output, output_line_info(
+            str_from("Total"), str_builder_build(csb)));
+    }
+    elif (streq(str_data(subcmd), "list")) {
+        ark_output_add(output, output_line_header(
+            str_from("Bazaar community packages")));
+        var all = bdb_recipes(bdb);
+        var i = 0;
+        while (i < vec_len(all)) {
+            var r = vec_get(all, i);
+            var desc = recipe_desc(r);
+            if (desc == 0) { desc = str_from(""); }
+            ark_output_add(output, output_line_package(
+                recipe_name(r), recipe_version(r),
+                SOURCE_COMMUNITY, desc));
+            i = i + 1;
+        }
+        ark_output_add(output, output_line_separator());
+        var csb = str_builder_new();
+        str_builder_add_int(csb, vec_len(all));
+        str_builder_add_cstr(csb, " community packages");
+        ark_output_add(output, output_line_info(
+            str_from("Total"), str_builder_build(csb)));
+    }
+    elif (streq(str_data(subcmd), "info")) {
+        if (str_len(query) == 0) {
+            ark_output_add(output, output_line_error(
+                str_from("Usage: ark bazaar info <package>")));
+        } else {
+            # Find by scanning (hashmap keys may not match query cstr)
+            var r = 0;
+            var all = bdb_recipes(bdb);
+            var si = 0;
+            while (si < vec_len(all)) {
+                var candidate = vec_get(all, si);
+                if (str_eq(recipe_name(candidate), query)) {
+                    r = candidate;
+                    si = vec_len(all);
+                }
+                si = si + 1;
+            }
+            if (r == 0) {
+                var wsb = str_builder_new();
+                str_builder_add_cstr(wsb, "Package '");
+                str_builder_add(wsb, query);
+                str_builder_add_cstr(wsb, "' not found in bazaar");
+                ark_output_add(output, output_line_warning(
+                    str_builder_build(wsb)));
+            } else {
+                ark_output_add(output, output_line_header(
+                    str_from("Bazaar package")));
+                ark_output_add(output, output_line_info(
+                    str_from("Name"), recipe_name(r)));
+                ark_output_add(output, output_line_info(
+                    str_from("Version"), recipe_version(r)));
+                var desc = recipe_desc(r);
+                if (desc > 0 && str_len(desc) > 0) {
+                    ark_output_add(output, output_line_info(
+                        str_from("Description"), desc));
+                }
+                var lic = recipe_license(r);
+                if (lic > 0 && str_len(lic) > 0) {
+                    ark_output_add(output, output_line_info(
+                        str_from("License"), lic));
+                }
+                var rdeps = recipe_deps_runtime(r);
+                if (vec_len(rdeps) > 0) {
+                    ark_output_add(output, output_line_info(
+                        str_from("Runtime deps"),
+                        str_join(rdeps, str_from(", "))));
+                }
+                var bdeps = recipe_deps_build(r);
+                if (vec_len(bdeps) > 0) {
+                    ark_output_add(output, output_line_info(
+                        str_from("Build deps"),
+                        str_join(bdeps, str_from(", "))));
+                }
+            }
+        }
+    } else {
+        ark_output_add(output, output_line_error(
+            str_from("Usage: ark bazaar <search|list|info> [query]")));
+    }
+
+    return ark_result_new(1, ark_output_to_display_string(output),
+        vec_new(), SOURCE_COMMUNITY);
+}

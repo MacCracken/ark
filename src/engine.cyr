@@ -184,6 +184,7 @@ fn ark_execute(mgr, cmd) {
     if (tag == CMD_ROLLBACK) { return ark_rollback(mgr, acmd_package(cmd)); }
     if (tag == CMD_BACKUP) { return ark_backup(mgr); }
     if (tag == CMD_RESTORE) { return ark_restore(mgr, acmd_package(cmd)); }
+    if (tag == CMD_BAZAAR) { return ark_bazaar(mgr, acmd_group(cmd), acmd_query(cmd)); }
     return ark_result_new(0, str_from("Unknown command"), vec_new(), SOURCE_UNKNOWN);
 }
 
