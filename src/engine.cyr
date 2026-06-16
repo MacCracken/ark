@@ -274,7 +274,8 @@ fn ark_rollback(mgr, txn_id_str) {
     str_builder_add_cstr(sb, ": ");
     str_builder_add_int(sb, vec_len(iplan_steps(plan)));
     str_builder_add_cstr(sb, " reverse step(s)");
-    return ark_result_new(1, str_builder_build(sb), affected, SOURCE_UNKNOWN);
+    var described = ark_result_new(1, str_builder_build(sb), affected, SOURCE_UNKNOWN);
+    return ark_apply_or_describe(mgr, plan, described);
 }
 
 # Backup: copy packages.json and transaction.log to a timestamped dir
@@ -385,7 +386,8 @@ fn ark_install(mgr, packages, force) {
     str_builder_add(sb, str_join(order, str_from(", ")));
     var primary = SOURCE_UNKNOWN;
     if (vec_len(pkgs) > 0) { primary = rp_src(vec_get(pkgs, 0)); }
-    return ark_result_new(1, str_builder_build(sb), affected, primary);
+    var described = ark_result_new(1, str_builder_build(sb), affected, primary);
+    return ark_apply_or_describe(mgr, iplan, described);
 }
 
 fn ark_remove(mgr, packages, purge) {
@@ -405,7 +407,8 @@ fn ark_remove(mgr, packages, purge) {
     str_builder_add_cstr(sb, "Remove plan (");
     str_builder_add_int(sb, vec_len(steps));
     str_builder_add_cstr(sb, " steps)");
-    return ark_result_new(1, str_builder_build(sb), packages, primary);
+    var described = ark_result_new(1, str_builder_build(sb), packages, primary);
+    return ark_apply_or_describe(mgr, plan, described);
 }
 
 fn ark_search(mgr, query, source_filter) {

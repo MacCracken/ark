@@ -234,6 +234,13 @@ fn acfg_set_shakti_path(p, v) { store64(p + 72, v); }
 fn acfg_apply(p) { return load64(p + 80); }
 fn acfg_set_apply(p, v) { store64(p + 80, v); }
 
+# apply modes (acfg_apply): how the executor treats a built plan.
+enum ApplyMode {
+    APPLY_NONE = 0;   # show the plan only — default, runs nothing
+    APPLY_REAL = 1;   # execute via shakti/system
+    APPLY_DRY = 2;    # dry run — render concrete commands, run nothing
+}
+
 fn ark_config_default() {
     var p = alloc(ACFG_SZ);
     store64(p, STRAT_SYSTEM_FIRST);

@@ -604,7 +604,9 @@ fn test_recipes() {
         assert(is_ok(rr2), "parse curl.cyml");
         var r2 = result_unwrap(rr2);
         assert(str_eq(recipe_name(r2), str_from("curl")), "curl name");
-        assert(str_eq(recipe_version(r2), str_from("8.19.0")), "curl ver");
+        # version is validated as parsed-non-empty rather than pinned to an
+        # exact upstream value (zugot bumps curl independently of ark)
+        assert(str_len(recipe_version(r2)) > 0, "curl ver parsed");
         assert(vec_len(recipe_deps_runtime(r2)) > 0, "curl runtime deps");
         assert(vec_len(recipe_deps_build(r2)) > 0, "curl build deps");
         assert(recipe_build_install(r2) > 0, "curl has install");

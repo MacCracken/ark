@@ -26,7 +26,8 @@ fn parse_args(ac, av) {
                 if (i >= ac) { println("--group requires a group name"); return 0; }
                 acmd_set_tag(c, CMD_GROUP_INSTALL);
                 acmd_set_group(c, str_from(argv(i)));
-            } elif (load8(arg) != 45) { vec_push(acmd_packages(c), str_from(arg)); }
+            } elif (streq(arg, "--apply") || streq(arg, "--dry-run")) { }
+            elif (load8(arg) != 45) { vec_push(acmd_packages(c), str_from(arg)); }
             else { println("Unknown flag for install"); return 0; }
             i = i + 1;
         }
@@ -42,6 +43,7 @@ fn parse_args(ac, av) {
         while (i < ac) {
             var arg = argv(i);
             if (streq(arg, "--purge")) { acmd_set_purge(c, 1); }
+            elif (streq(arg, "--apply") || streq(arg, "--dry-run")) { }
             elif (load8(arg) != 45) { vec_push(acmd_packages(c), str_from(arg)); }
             else { println("Unknown flag for remove"); return 0; }
             i = i + 1;
@@ -162,8 +164,14 @@ fn parse_args(ac, av) {
     }
     if (streq(command, "rollback")) {
         var c = ark_cmd_new(CMD_ROLLBACK);
+        # first non-flag arg is the optional txn id; --apply/--dry-run are
+        # global flags consumed in main(), so skip any leading flags here
         var ri = cmd_idx + 1;
-        if (ac > ri) { acmd_set_package(c, str_from(argv(ri))); }
+        while (ri < ac) {
+            var arg = argv(ri);
+            if (load8(arg) != 45) { acmd_set_package(c, str_from(arg)); break; }
+            ri = ri + 1;
+        }
         return c;
     }
     if (streq(command, "backup")) { return ark_cmd_new(CMD_BACKUP); }
@@ -335,11 +343,17 @@ fn main() {
     var i = 1;
     while (i < ac) {
         if (streq(argv(i), "--no-color")) { acfg_set_color(config, 0); }
+        if (streq(argv(i), "--apply")) { acfg_set_apply(config, APPLY_REAL); }
+        if (streq(argv(i), "--dry-run")) { acfg_set_apply(config, APPLY_DRY); }
         i = i + 1;
     }
-    var prompt = needs_confirmation(cmd, config);
-    if (prompt > 0) {
-        if (confirm(prompt) == 0) { println("Cancelled."); return 0; }
+    # Confirm only when a step will actually run. Plan-only (default) and
+    # dry-run never mutate the system, so they skip the prompt.
+    if (acfg_apply(config) == APPLY_REAL) {
+        var prompt = needs_confirmation(cmd, config);
+        if (prompt > 0) {
+            if (confirm(prompt) == 0) { println("Cancelled."); return 0; }
+        }
     }
     var mgr = ark_mgr_new(config);
     var result = ark_execute(mgr, cmd);

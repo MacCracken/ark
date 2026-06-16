@@ -16,7 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   - `ArkConfig` gains `shakti_path` (default `/usr/bin/shakti`) and an `apply` flag (default `0` = plan-only, preserving current behavior).
   - 32 new tests (204 total) covering lowering, version pinning, shakti wrapping, privilege classification, transaction-op mapping, and dry-run plan execution.
 
-Not yet wired into the live `ark install`/`remove` CLI (that is the next bite); default behavior is unchanged.
+- **Execution backend — CLI wiring** (bite 2). The executor is now reachable from the live CLI:
+  - `--apply` runs the plan via the executor; `--dry-run` renders the concrete `shakti -- …` commands without running them; neither flag preserves the existing plan-only display. Plumbed through `ArkConfig.apply` (`APPLY_NONE`/`APPLY_REAL`/`APPLY_DRY`).
+  - `ark_install`, `ark_remove`, and `ark_rollback` dispatch their built plan through `ark_apply_or_describe(mgr, iplan, described)`.
+  - Confirmation is now gated on `APPLY_REAL` — plan-only and dry-run never prompt (they mutate nothing); a real apply still prompts per `confirm_system_installs`/`confirm_removals`.
+  - `parse_args` accepts `--apply`/`--dry-run` on `install`/`remove` and skips leading flags for `rollback`.
+  - Test fix: the `curl.cyml` recipe assertion no longer pins the exact upstream version (zugot bumped curl to 8.20.0); it now asserts the version parses non-empty.
+
+Known issue (pre-existing, surfaced by the confirm-gating change): `nous`'s `resolver_resolve_all_with_recipes` can SIGSEGV nondeterministically when resolving against an unpopulated marketplace (dev environments without `/var/lib/agnos/marketplace` data). Previously masked because `ark install` always prompted and cancelled without stdin. Resolution lives in nous — tracked for a fix there; it blocks live end-to-end install in bare dev environments but not the executor logic, which is covered by dry-run unit tests.
 
 ## [0.8.2] - 2026-06-16
 

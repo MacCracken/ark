@@ -111,6 +111,17 @@ fn exec_argv_to_str(argv) {
     return str_join(argv, str_from(" "));
 }
 
+# Dispatch a freshly built plan according to the configured apply mode.
+# APPLY_NONE returns the caller's plan-description result unchanged (so
+# `ark install` still just shows the plan by default); APPLY_REAL runs it;
+# APPLY_DRY renders the concrete commands without running them.
+fn ark_apply_or_describe(mgr, iplan, describe_result) {
+    var mode = acfg_apply(amgr_config(mgr));
+    if (mode == APPLY_REAL) { return exec_plan(mgr, iplan, 0); }
+    if (mode == APPLY_DRY) { return exec_plan(mgr, iplan, 1); }
+    return describe_result;
+}
+
 # Execute (or, when dry_run==1, describe) an InstallPlan.
 # Returns an ArkResult: success(1)/message, or failure(0)/message on the
 # first non-zero step. On a real run, each step is recorded to the
