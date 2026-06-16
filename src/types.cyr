@@ -20,6 +20,7 @@ var ARK_VERSION_STR = "0.8.2";
 
 var DEFAULT_TRANSACTION_LOG_PATH = "/var/lib/agnos/ark/transaction.log";
 var DEFAULT_PACKAGE_DB_PATH = "/var/lib/agnos/ark/packages.json";
+var DEFAULT_SHAKTI_PATH = "/usr/bin/shakti";
 
 # ANSI color codes
 var ANSI_RESET = "\x1b[0m";
@@ -208,10 +209,15 @@ fn ark_result_new(success, message, packages, source) {
 # ArkConfig
 # Fields: default_strategy(0) confirm_system_installs(8) confirm_removals(16)
 #         auto_update_check(24) color_output(32) marketplace_dir(40)
-#         cache_dir(48) package_db_path(56) transaction_log_path(64) => 72 bytes
+#         cache_dir(48) package_db_path(56) transaction_log_path(64)
+#         shakti_path(72) apply(80) => 88 bytes
+#
+# shakti_path: setuid privilege-escalation binary the executor invokes for
+#   privileged steps (see docs/adr/0001-shakti-execution-backend.md).
+# apply: 0 = plan only (default — safe); 1 = run the plan via the executor.
 # =========================================================================
 
-var ACFG_SZ = 72;
+var ACFG_SZ = 88;
 
 fn acfg_strategy(p) { return load64(p); }
 fn acfg_confirm_sys(p) { return load64(p + 8); }
@@ -223,6 +229,10 @@ fn acfg_mkt_dir(p) { return load64(p + 40); }
 fn acfg_cache_dir(p) { return load64(p + 48); }
 fn acfg_db_path(p) { return load64(p + 56); }
 fn acfg_log_path(p) { return load64(p + 64); }
+fn acfg_shakti_path(p) { return load64(p + 72); }
+fn acfg_set_shakti_path(p, v) { store64(p + 72, v); }
+fn acfg_apply(p) { return load64(p + 80); }
+fn acfg_set_apply(p, v) { store64(p + 80, v); }
 
 fn ark_config_default() {
     var p = alloc(ACFG_SZ);
@@ -235,5 +245,7 @@ fn ark_config_default() {
     store64(p + 48, str_from("/var/cache/agnos/ark"));
     store64(p + 56, str_from(DEFAULT_PACKAGE_DB_PATH));
     store64(p + 64, str_from(DEFAULT_TRANSACTION_LOG_PATH));
+    store64(p + 72, str_from(DEFAULT_SHAKTI_PATH));
+    store64(p + 80, 0);
     return p;
 }

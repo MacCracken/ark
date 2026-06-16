@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Execution backend — foundation** (`src/exec.cyr`), implementing [ADR 0001](docs/adr/0001-shakti-execution-backend.md). First bite of the `plan → shakti → system` executor:
+  - `step_to_argv` lowers each `InstallStep` to a concrete system command. System steps map to `apt-get install/remove/purge/update` (with `pkg=ver` version pinning); marketplace (takumi) and Flutter (agpkg) return a "backend not yet wired" sentinel rather than silently skipping — those bites are still pending.
+  - Privileged steps are wrapped as `shakti -- <argv…>` (`exec_wrap_argv`); `exec_plan` runs steps via `process.exec_vec_str`, which returns shakti's propagated child exit code, and records each step to the transaction log (commit on success, fail on first error for rollback).
+  - `exec_plan` supports a **dry-run** mode that renders the exact commands without forking — fully unit-testable without root/apt.
+  - `ArkConfig` gains `shakti_path` (default `/usr/bin/shakti`) and an `apply` flag (default `0` = plan-only, preserving current behavior).
+  - 32 new tests (204 total) covering lowering, version pinning, shakti wrapping, privilege classification, transaction-op mapping, and dry-run plan execution.
+
+Not yet wired into the live `ark install`/`remove` CLI (that is the next bite); default behavior is unchanged.
+
 ## [0.8.2] - 2026-06-16
 
 ### Changed
@@ -45,7 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `version`/`VERSION`/`ARK_VERSION_STR` synced to `0.8.1`.
 - Full suite green: 172/172 tests pass; benchmarks and `cyrius lint`/`fmt --check` clean.
 
-## [Unreleased]
+## [0.1.0-dev] - Rust (historical, pre-port development log)
 
 ### Added
 

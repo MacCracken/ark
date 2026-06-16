@@ -6,6 +6,7 @@ include "src/output.cyr"
 include "src/transaction.cyr"
 include "src/db.cyr"
 include "src/engine.cyr"
+include "src/exec.cyr"
 include "src/recipe.cyr"
 include "src/bazaar.cyr"
 include "src/cli.cyr"
@@ -624,6 +625,88 @@ fn test_manager() {
     assert(str_contains(text, str_from("ark is operational")), "operational");
 }
 
+fn test_exec() {
+    test_group("exec");
+
+    # --- lowering: system install ---
+    var a1 = step_to_argv(step_system_install(str_from("nginx"), str_from("")));
+    assert(a1 != 0, "system install lowered");
+    assert_eq(vec_len(a1), 4, "install argv len 4");
+    assert(str_eq(vec_get(a1, 0), str_from("apt-get")), "argv[0] apt-get");
+    assert(str_eq(vec_get(a1, 1), str_from("install")), "argv[1] install");
+    assert(str_eq(vec_get(a1, 2), str_from("-y")), "argv[2] -y");
+    assert(str_eq(vec_get(a1, 3), str_from("nginx")), "argv[3] pkg");
+
+    # --- version pin: apt pkg=ver ---
+    var a2 = step_to_argv(step_system_install(str_from("nginx"), str_from("1.2.3")));
+    assert(str_eq(vec_get(a2, 3), str_from("nginx=1.2.3")), "version pin pkg=ver");
+
+    # --- remove: purge vs remove verb ---
+    var a3 = step_to_argv(step_system_remove(str_from("nginx"), 0));
+    assert(str_eq(vec_get(a3, 1), str_from("remove")), "remove verb");
+    var a4 = step_to_argv(step_system_remove(str_from("nginx"), 1));
+    assert(str_eq(vec_get(a4, 1), str_from("purge")), "purge verb");
+
+    # --- update ---
+    var a5 = step_to_argv(step_system_update());
+    assert_eq(vec_len(a5), 2, "update argv len 2");
+    assert(str_eq(vec_get(a5, 1), str_from("update")), "update verb");
+
+    # --- not-yet-wired backends return 0 ---
+    assert_eq(step_to_argv(step_marketplace_install(str_from("x"), str_from(""))), 0, "marketplace not wired");
+    assert_eq(step_to_argv(step_flutter_install(str_from("x"), str_from(""))), 0, "flutter not wired");
+
+    # --- privilege classification ---
+    assert_eq(step_needs_root(step_system_install(str_from("x"), str_from(""))), 1, "system needs root");
+    assert_eq(step_needs_root(step_marketplace_install(str_from("x"), str_from(""))), 0, "mkt no root");
+
+    # --- shakti wrapping ---
+    var w = exec_wrap_argv(a1, 1, str_from("/usr/bin/shakti"));
+    assert_eq(vec_len(w), 6, "wrapped len 6");
+    assert(str_eq(vec_get(w, 0), str_from("/usr/bin/shakti")), "wrap[0] shakti");
+    assert(str_eq(vec_get(w, 1), str_from("--")), "wrap[1] --");
+    assert(str_eq(vec_get(w, 2), str_from("apt-get")), "wrap[2] apt-get");
+    var w0 = exec_wrap_argv(a1, 0, str_from("/usr/bin/shakti"));
+    assert_eq(vec_len(w0), 4, "unprivileged argv unchanged");
+
+    # --- argv render ---
+    assert(str_eq(exec_argv_to_str(a1), str_from("apt-get install -y nginx")), "argv render");
+
+    # --- transaction op type / source classification ---
+    assert_eq(step_op_type(step_system_remove(str_from("x"), 0)), OP_REMOVE, "remove op type");
+    assert_eq(step_op_type(step_system_install(str_from("x"), str_from(""))), OP_INSTALL, "install op type");
+    assert_eq(step_source(step_system_install(str_from("x"), str_from(""))), SOURCE_SYSTEM, "system source");
+
+    # --- dry-run plan execution (no fork, no fs writes) ---
+    var cfg = ark_config_default();
+    store64(cfg + 40, str_from("/tmp/ark-test-mkt"));
+    store64(cfg + 48, str_from("/tmp/ark-test-cache"));
+    var mgr = ark_mgr_new(cfg);
+
+    var plan = install_plan_new();
+    vec_push(iplan_steps(plan), step_system_install(str_from("nginx"), str_from("")));
+    vec_push(iplan_steps(plan), step_system_update());
+    iplan_set_root(plan, 1);
+    var rdry = exec_plan(mgr, plan, 1);
+    assert_eq(ares_success(rdry), 1, "dry run ok");
+    var dmsg = ares_message(rdry);
+    assert(str_contains(dmsg, str_from("Dry run")), "dry run header");
+    assert(str_contains(dmsg, str_from("/usr/bin/shakti -- apt-get install -y nginx")), "dry run wrapped cmd");
+    assert(str_contains(dmsg, str_from("/usr/bin/shakti -- apt-get update")), "dry run update cmd");
+
+    # --- empty plan ---
+    var rempty = exec_plan(mgr, install_plan_new(), 1);
+    assert_eq(ares_success(rempty), 1, "empty plan ok");
+    assert(str_contains(ares_message(rempty), str_from("Nothing to do")), "empty plan msg");
+
+    # --- not-wired step fails the whole plan ---
+    var plan2 = install_plan_new();
+    vec_push(iplan_steps(plan2), step_marketplace_install(str_from("my-agent"), str_from("1.0")));
+    var rnw = exec_plan(mgr, plan2, 1);
+    assert_eq(ares_success(rnw), 0, "not-wired fails plan");
+    assert(str_contains(ares_message(rnw), str_from("not yet wired")), "not-wired msg");
+}
+
 # =========================================================================
 # Main test runner
 # =========================================================================
@@ -640,6 +723,7 @@ fn test_main() {
     test_security();
     test_recipes();
     test_manager();
+    test_exec();
     return assert_summary();
 }
 
