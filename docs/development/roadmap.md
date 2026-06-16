@@ -51,6 +51,16 @@
 - [x] CI/CD workflows updated (lint, test, bench, DCE)
 - [x] `#ifdef ARK_MAIN` guard for test/bench inclusion
 
+### v0.8.1 (2026-06-16) - Toolchain & dependency modernization
+
+- [x] Cyrius toolchain pin `5.1.10` → `6.2.12` (drift resolved)
+- [x] nous `1.1.1` → `1.2.6`, consumed via single-file `dist/nous.cyr` artifact
+- [x] sigil `2.1.2` → `3.7.16`
+- [x] stdlib realigned for 6.2.x: `json`/`bigint`/`toml` → `bayan`; added `ct`/`random`/`keccak`/`thread_local`/`slice`/`result`/`fnptr`/`bench`
+- [x] Fixed recipe SIGSEGV (`cyml_parse` → `nous_cyml_parse`) and crypto SIGILL (missing stdlib crypto modules)
+- [x] Removed 17 stale vendored lib files (14 `nous_*.cyr` + `json`/`bigint`/`toml`)
+- [x] 172 tests pass; lint/fmt/benchmarks clean
+
 ## Backlog
 
 ### Package Management

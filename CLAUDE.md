@@ -24,7 +24,7 @@ All AGNOS users (installs packages). Ark is the primary interface for package in
 0. Read roadmap, CHANGELOG, and open issues — know what was intended before auditing what was built
 1. Test + benchmark sweep of existing code
 2. Cleanliness check: `cargo fmt --check`, `cargo clippy --all-features --all-targets -- -D warnings`, `cargo audit`, `cargo deny check`, `RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps`
-3. Get baseline benchmarks (`./scripts/bench-history.sh`)
+3. Get baseline benchmarks (`cyrius bench tests/ark.bcyr`)
 4. Internal deep review — gaps, optimizations, security, logging/errors, docs
 5. External research — domain completeness, missing capabilities, best practices, world-class accuracy
 6. Cleanliness check — must be clean after review
@@ -38,7 +38,7 @@ All AGNOS users (installs packages). Ark is the primary interface for package in
 1. Work phase — new features, roadmap items, bug fixes
 2. Cleanliness check: `cargo fmt --check`, `cargo clippy --all-features --all-targets -- -D warnings`, `cargo audit`, `cargo deny check`, `RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps`
 3. Test + benchmark additions for new code
-4. Run benchmarks (`./scripts/bench-history.sh`)
+4. Run benchmarks (`cyrius bench tests/ark.bcyr`)
 5. Internal review — performance, memory, security, throughput, correctness
 6. Cleanliness check — must be clean after review
 7. Deeper tests/benchmarks from review observations

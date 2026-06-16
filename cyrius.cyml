@@ -1,10 +1,10 @@
 [package]
 name = "ark"
-version = "0.8.0"
+version = "0.8.1"
 description = "ark - Cyrius port"
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "5.1.10"
+cyrius = "6.2.12"
 
 [build]
 entry = "src/main.cyr"
@@ -12,31 +12,16 @@ output = "ark"
 defines = ["ARK_MAIN"]
 
 [deps]
-stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "args", "assert", "hashmap", "tagged", "toml", "json", "fs", "freelist", "bigint", "chrono", "process"]
+stdlib = ["string", "fmt", "alloc", "vec", "str", "slice", "syscalls", "io", "args", "assert", "hashmap", "tagged", "fs", "freelist", "chrono", "process", "result", "fnptr", "bench", "bayan", "ct", "random", "keccak", "thread_local"]
 
 [deps.sigil]
 git = "https://github.com/MacCracken/sigil.git"
 path = "../sigil"
-tag = "2.1.2"
+tag = "3.7.16"
 modules = ["dist/sigil.cyr"]
 
 [deps.nous]
 git = "https://github.com/MacCracken/nous.git"
 path = "../nous"
-tag = "1.1.1"
-modules = [
-    "src/types.cyr",
-    "src/util.cyr",
-    "src/error.cyr",
-    "src/strategy.cyr",
-    "src/source.cyr",
-    "src/command.cyr",
-    "src/sort.cyr",
-    "src/registry.cyr",
-    "src/sysdb.cyr",
-    "src/resolver.cyr",
-    "src/json.cyr",
-    "src/version.cyr",
-    "src/graph.cyr",
-    "src/recipe.cyr",
-]
+tag = "1.2.6"
+modules = ["dist/nous.cyr"]

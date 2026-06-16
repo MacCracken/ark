@@ -1,0 +1,1 @@
+error: could not find `Cargo.toml` in `/home/macro/Repos/ark` or any parent directory

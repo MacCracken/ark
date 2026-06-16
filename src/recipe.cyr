@@ -104,10 +104,12 @@ fn recipe_parse_file(path) {
 }
 
 fn recipe_parse(data, len) {
-    # Use nous's cyml_parse which handles triple-quoted strings,
-    # arrays, and full TOML/CYML syntax
+    # Use nous's cyml parser which handles triple-quoted strings,
+    # arrays, and full TOML/CYML syntax. nous renamed its single-arg
+    # parser to nous_cyml_parse to avoid clashing with bayan's two-arg
+    # cyml_parse(data, len) now bundled via the stdlib.
     var content = str_new(data, len);
-    var sections = cyml_parse(content);
+    var sections = nous_cyml_parse(content);
     if (sections == 0) { return Err(3); }
 
     var r = recipe_new();
