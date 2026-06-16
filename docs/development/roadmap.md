@@ -61,47 +61,58 @@
 - [x] Removed 17 stale vendored lib files (14 `nous_*.cyr` + `json`/`bigint`/`toml`)
 - [x] 172 tests pass; lint/fmt/benchmarks clean
 
+### v0.8.2 (2026-06-16) - Roadmap reconciliation & shakti execution review
+
+- [x] Roadmap reconciled against the actual codebase (backlog had drifted — many shipped features were still marked open)
+- [x] shakti reviewed for execution capability; integration contract captured in [ADR 0001](../adr/0001-shakti-execution-backend.md)
+- [x] Confirmed the execution backend is the one true gap: ark builds typed `InstallPlan`s but no step is ever run (`process.cyr` pulled in, never called)
+
+### Capability inventory (verified against code 2026-06-16)
+
+These were on the backlog but are implemented and tested in the tree today:
+
+- [x] Recipe (zugot) parsing **and** validation — `recipe_parse` / `recipe_validate` (`src/recipe.cyr`), green against `curl.cyml`
+- [x] Package signing & verification via sigil Ed25519 — `sign_data` / `verify_data` / `generate_keypair` (`src/db.cyr`)
+- [x] Per-file checksums — `pdbe_set_file_hash` / `pdbe_get_file_hash` (replaces single per-package checksum)
+- [x] Package pinning + version/source locking — `ark_pin` / `ark_unpin`, `pkg_db_pin_version`, `pkg_db_pin_source`
+- [x] Source pinning per package (anti silent-source-switch) — `pkg_db_pin_source`
+- [x] Rollback **plan** generation — `ark_rollback` builds the reverse plan (execution gated on the backend below)
+- [x] Backup & restore — `ark_backup` / `ark_restore`
+- [x] Shell completions — `completions/ark.{bash,zsh,fish}`
+- [x] Database migration framework — `schema_version` read + migrate-on-load (`src/db.cyr`)
+- [x] Secure temp file handling — random suffix + `O_CREAT|O_EXCL|O_WRONLY` 0600 (`src/db.cyr`)
+- [x] `fsync` on transaction-log writes — locked append + fsync (`src/transaction.cyr`)
+- [x] Privilege-aware config loading — skips user-writable configs when `euid == 0` (`src/cli.cyr`)
+- [x] Bazaar local catalog browse — `bazaar_db_load` / search / list-by-category (`src/bazaar.cyr`); download/verify still open
+
 ## Backlog
 
-### Package Management
-- [ ] Recipe (zugot) parsing and validation
-- [ ] Package signing and verification via sigil (sigil dep in place)
-- [ ] Actual execution backend (plan -> shakti -> system)
-- [ ] Package pinning and version locking
+### Execution backend (the critical path)
+- [ ] **Step executor: plan → shakti → system** — run each `InstallStep`; gate privileged plans (`iplan_root == 1`) through the setuid `shakti` binary via `process.cyr`; capture exit code, record transaction, verify integrity post-step (see [ADR 0001](../adr/0001-shakti-execution-backend.md))
+- [ ] Rollback **execution** (reverse plan exists; needs the executor to run it)
+- [ ] Plan signing for shakti verification (sign the plan ark hands off)
+- [ ] Dry-run / `--simulate` mode for the executor
+
+### Marketplace & community
+- [ ] Marketplace package download + SHA-256/signature verification (no HTTP/fetch path yet)
+- [ ] Bazaar install path (catalog browse done; wire to download + executor)
+- [ ] Mirror support
+- [ ] Package rating & reviews integration
+- [ ] Typosquatting detection (Levenshtein distance)
+
+### Resolution (mostly nous-side)
 - [ ] Dependency conflict resolution UI
-- [ ] Rollback execution (undo a committed transaction)
-- [ ] Namespace scoping for dependency confusion defense (nous)
-- [ ] Source pinning per package (prevent silent source switching)
+- [ ] Namespace scoping for dependency-confusion defense (nous)
 
 ### CLI
 - [ ] Progress bar / spinner during operations
-- [ ] Shell completions (bash, zsh, fish)
 
-### Database & Persistence
-- [ ] Database migration framework
-- [ ] Backup and restore
-- [ ] Per-file checksums (replace single checksum per package)
-- [ ] Secure temp file handling (O_NOFOLLOW, random names)
-
-### Marketplace & Community
-- [ ] Marketplace download and verification
-- [ ] Bazaar (community package) support
-- [ ] Package rating and reviews integration
-- [ ] Mirror support
-- [ ] Typosquatting detection (Levenshtein distance)
-
-### Security
-- [ ] Privilege-aware config loading (ignore CWD config when root)
-- [ ] Cryptographic package signing via sigil Ed25519
-- [ ] fsync on transaction log writes
-- [ ] Plan signing for shakti verification
-
-### Testing & Quality
-- [ ] Integration tests with real nous resolver
-- [ ] Property-based testing for parser
-- [ ] Fuzzing for JSONL transaction log parser
-- [ ] End-to-end test harness
-- [ ] Fuzz harness for package name validation
+### Testing & quality
+- [ ] Integration tests with the real nous resolver
+- [ ] Property-based testing for the recipe parser
+- [ ] Fuzz harness for the JSONL transaction-log parser
+- [ ] Fuzz harness for package-name validation
+- [ ] End-to-end test harness (requires the executor)
 
 ## Future
 
@@ -117,7 +128,8 @@
 - [ ] Benchmarks stable across releases
 - [ ] Security audit passed (P(-1) done, formal audit pending)
 - [ ] Documentation complete with examples and guides
-- [ ] Recipe parsing validated against zugot corpus
-- [ ] Package signing verified end-to-end
+- [ ] Recipe parsing validated against full zugot corpus (single-recipe `curl.cyml` passes today)
+- [ ] Package signing verified end-to-end (primitives in place; needs the executor to exercise the full path)
 - [ ] Integration tested on AGNOS target hardware
-- [ ] nous ported to Cyrius and integrated
+- [x] nous ported to Cyrius and integrated (nous 1.2.6, consumed via `dist/nous.cyr`)
+- [ ] Execution backend live (plan → shakti → system)
