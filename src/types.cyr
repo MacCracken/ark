@@ -16,7 +16,7 @@
 # Constants
 # =========================================================================
 
-var ARK_VERSION_STR = "0.8.2";
+var ARK_VERSION_STR = "0.8.3";
 
 var DEFAULT_TRANSACTION_LOG_PATH = "/var/lib/agnos/ark/transaction.log";
 var DEFAULT_PACKAGE_DB_PATH = "/var/lib/agnos/ark/packages.json";

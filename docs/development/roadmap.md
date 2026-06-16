@@ -67,6 +67,15 @@
 - [x] shakti reviewed for execution capability; integration contract captured in [ADR 0001](../adr/0001-shakti-execution-backend.md)
 - [x] Confirmed the execution backend is the one true gap: ark builds typed `InstallPlan`s but no step is ever run (`process.cyr` pulled in, never called)
 
+### v0.8.3 (2026-06-16) - Execution backend (bites 1–2) + install-crash fix
+
+- [x] Executor module `src/exec.cyr`: step lowering (system → `apt-get`), shakti wrapping (`shakti -- …`), `exec_plan` (real + dry-run), transaction recording
+- [x] CLI wiring: `--apply` / `--dry-run`; confirmation gated on real apply; `ark_install`/`ark_remove`/`ark_rollback` dispatch via `ark_apply_or_describe`
+- [x] `ArkConfig` gains `shakti_path` + `apply` mode (`APPLY_NONE`/`APPLY_REAL`/`APPLY_DRY`)
+- [x] Fixed `ark install` SIGSEGV on hosts without a provisioned marketplace (nous `1.2.6` → `1.2.7`: `registry_new` tolerates a missing dir)
+- [x] 204 tests pass (+32 exec assertions); lint/fmt clean
+- [ ] Still open: real apply needs apt+shakti on target; marketplace (takumi) / Flutter (agpkg) lowering; rollback execution; dry-run end-to-end
+
 ### Capability inventory (verified against code 2026-06-16)
 
 These were on the backlog but are implemented and tested in the tree today:
