@@ -23,5 +23,5 @@ modules = ["dist/sigil.cyr"]
 [deps.nous]
 git = "https://github.com/MacCracken/nous.git"
 path = "../nous"
-tag = "1.2.6"
+tag = "1.2.7"
 modules = ["dist/nous.cyr"]

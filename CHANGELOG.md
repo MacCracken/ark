@@ -23,7 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   - `parse_args` accepts `--apply`/`--dry-run` on `install`/`remove` and skips leading flags for `rollback`.
   - Test fix: the `curl.cyml` recipe assertion no longer pins the exact upstream version (zugot bumped curl to 8.20.0); it now asserts the version parses non-empty.
 
-Known issue (pre-existing, surfaced by the confirm-gating change): `nous`'s `resolver_resolve_all_with_recipes` can SIGSEGV nondeterministically when resolving against an unpopulated marketplace (dev environments without `/var/lib/agnos/marketplace` data). Previously masked because `ark install` always prompted and cancelled without stdin. Resolution lives in nous — tracked for a fix there; it blocks live end-to-end install in bare dev environments but not the executor logic, which is covered by dry-run unit tests.
+### Changed
+
+- **nous `1.2.6` → `1.2.7`** — picks up the fix for the resolution SIGSEGV below.
+
+### Fixed
+
+- **`ark install` SIGSEGV on systems without a provisioned marketplace.** Root cause was in nous: `registry_new` hard-errored when `/var/lib/agnos/marketplace` was absent, so `nous_resolver_new` returned a null sentinel and `nous_resolve_all` then handed back a non-error payload that the caller dereferenced. nous 1.2.7 treats a missing marketplace dir as an empty registry; `ark install`/`--dry-run` now resolve cleanly (0-package plan / "nothing to do") instead of crashing. Surfaced by the bite-2 confirm-gating change, which stopped masking it behind the cancel-on-no-stdin prompt.
 
 ## [0.8.2] - 2026-06-16
 
