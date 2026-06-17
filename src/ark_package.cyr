@@ -1,0 +1,359 @@
+# =========================================================================
+# ark_package.cyr — reader for the takumi `.ark` v1 package format.
+#
+# takumi builds and writes `.ark` packages (see takumi
+# docs/adr/0001-ark-binary-format.md and src/ark_format.cyr); ark is the
+# consumer and needs a matching reader. This module reads a `.ark` file,
+# verifies its integrity (SHA-256 root hash over the whole prefix) and
+# optional ed25519 signature, parses the manifest + file index, inflates
+# the DEFLATE data block, and re-verifies every per-file content hash.
+#
+# Layout (little-endian; strings are u32-len + raw bytes; hashes/keys/sigs
+# are raw bytes 32/32/64):
+#
+#   HEADER (16B): 0x89 'A' 'R' 'K' | u16 version | u16 flags
+#                 | u8 compress_algo | u8 compress_level
+#                 | u8 hash_algo | u8 sig_algo | u32 reserved
+#   MANIFEST:     u32 len | TOML text ([[manifest]] table, escaped)
+#   FILE-INDEX:   u32 count | entries (sorted by path):
+#                   u8 file_type | u8 eflags(bit0 has_sha,bit1 has_target)
+#                   | u32 path_len | path | u64 size
+#                   | [32B sha256] | [u32 tlen | target] | u64 data_offset
+#   DATA:         u64 uncompressed_len | u64 compressed_len | deflate bytes
+#   TRAILER:      32B root_hash | u8 has_sig | [32B pubkey | 64B signature]
+#
+# Manifest TOML escaping is symmetric: takumi escapes (\, ", \n, \t, \r);
+# bayan delimits escaped strings but does NOT un-escape, so we un-escape
+# here (mirrors takumi's reader; verified against bayan 2.3.1).
+# =========================================================================
+
+# --- format constants (mirror takumi's ArkFmt) -----------------------
+enum ArkPkgFmt {
+    ARK_FORMAT_VERSION = 1;
+    ARK_FLAG_SIGNED = 1;
+    ARK_FLAG_COMPRESSED = 2;
+    ARK_HEADER_LEN = 16;
+    ARK_FT_REGULAR = 0;
+    ARK_FT_DIRECTORY = 1;
+    ARK_FT_SYMLINK = 2;
+    ARK_FT_CONFIG = 3;
+}
+
+# --- little-endian readers over a raw byte buffer ---------------------
+fn apkg_u8(buf, off) { return load8(buf + off) & 0xFF; }
+fn apkg_u16(buf, off) { return apkg_u8(buf, off) | (apkg_u8(buf, off + 1) << 8); }
+fn apkg_u32(buf, off) { return apkg_u16(buf, off) | (apkg_u16(buf, off + 2) << 16); }
+fn apkg_u64(buf, off) { return apkg_u32(buf, off) | (apkg_u32(buf, off + 4) << 32); }
+
+# --- manifest model (13 fields, field order == takumi's writer) -------
+# name(0) version(8) release(16) description(24) arch(32) size_installed(40)
+# build_date(48) builder(56) source_url(64) source_hash(72) license(80)
+# groups(88) depends(96)  => 104 bytes
+fn apkg_man_name(m) { return load64(m); }
+fn apkg_man_version(m) { return load64(m + 8); }
+fn apkg_man_release(m) { return load64(m + 16); }
+fn apkg_man_description(m) { return load64(m + 24); }
+fn apkg_man_arch(m) { return load64(m + 32); }
+fn apkg_man_size_installed(m) { return load64(m + 40); }
+fn apkg_man_build_date(m) { return load64(m + 48); }
+fn apkg_man_builder(m) { return load64(m + 56); }
+fn apkg_man_source_url(m) { return load64(m + 64); }
+fn apkg_man_source_hash(m) { return load64(m + 72); }
+fn apkg_man_license(m) { return load64(m + 80); }
+fn apkg_man_groups(m) { return load64(m + 88); }
+fn apkg_man_depends(m) { return load64(m + 96); }
+
+# --- file-entry model -------------------------------------------------
+# path(0) sha_hex(8) size(16) file_type(24) symlink_target(32)
+# data_offset(40)  => 48 bytes. data_offset is the byte offset of this
+# entry's payload within the inflated data block.
+fn apkg_afe_path(e) { return load64(e); }
+fn apkg_afe_sha256(e) { return load64(e + 8); }
+fn apkg_afe_size(e) { return load64(e + 16); }
+fn apkg_afe_file_type(e) { return load64(e + 24); }
+fn apkg_afe_symlink_target(e) { return load64(e + 32); }
+fn apkg_afe_data_offset(e) { return load64(e + 40); }
+
+fn apkg_afe_new(path, sha_hex, size, ftype, target, data_offset) {
+    var e = alloc(48);
+    store64(e, path);
+    store64(e + 8, sha_hex);
+    store64(e + 16, size);
+    store64(e + 24, ftype);
+    store64(e + 32, target);
+    store64(e + 40, data_offset);
+    return e;
+}
+
+fn apkg_afe_has_payload(e) {
+    var t = apkg_afe_file_type(e);
+    if (t == ARK_FT_REGULAR) { return 1; }
+    if (t == ARK_FT_CONFIG) { return 1; }
+    return 0;
+}
+
+# --- package model ----------------------------------------------------
+# manifest(0) sig_hex(8) entries(16) data_hash(24) data(32) data_len(40)
+fn apkg_manifest(p) { return load64(p); }
+fn apkg_sig_hex(p) { return load64(p + 8); }
+fn apkg_entries(p) { return load64(p + 16); }
+fn apkg_data_hash(p) { return load64(p + 24); }
+fn apkg_data(p) { return load64(p + 32); }
+fn apkg_data_len(p) { return load64(p + 40); }
+
+fn apkg_new(manifest, sig_hex, entries, data_hash, data, data_len) {
+    var p = alloc(48);
+    store64(p, manifest);
+    store64(p + 8, sig_hex);
+    store64(p + 16, entries);
+    store64(p + 24, data_hash);
+    store64(p + 32, data);
+    store64(p + 40, data_len);
+    return p;
+}
+
+# --- manifest TOML un-escape (reverse takumi's escaping) --------------
+# Returns a fresh NUL-terminated cstr.
+fn apkg_unescape_bytes(data, n) {
+    var buf = alloc(n + 1);
+    var o = 0;
+    var i = 0;
+    while (i < n) {
+        var c = load8(data + i) & 0xFF;
+        if (c == 92) {
+            if (i + 1 < n) {
+                var d = load8(data + i + 1) & 0xFF;
+                if (d == 92) { store8(buf + o, 92); o = o + 1; i = i + 2; }
+                else { if (d == 34) { store8(buf + o, 34); o = o + 1; i = i + 2; }
+                    else { if (d == 110) { store8(buf + o, 10); o = o + 1; i = i + 2; }
+                        else { if (d == 116) { store8(buf + o, 9); o = o + 1; i = i + 2; }
+                            else { if (d == 114) { store8(buf + o, 13); o = o + 1; i = i + 2; }
+                                else { store8(buf + o, c); o = o + 1; i = i + 1; } } } } }
+            } else {
+                store8(buf + o, c); o = o + 1; i = i + 1;
+            }
+        } else {
+            store8(buf + o, c); o = o + 1; i = i + 1;
+        }
+    }
+    store8(buf + o, 0);
+    return buf;
+}
+
+fn apkg_unescape_str(s) { return apkg_unescape_bytes(str_data(s), str_len(s)); }
+fn apkg_unescape_cstr(c) { return apkg_unescape_bytes(c, strlen(c)); }
+
+# --- manifest parsing -------------------------------------------------
+fn apkg_find_section(sections, name) {
+    var i = 0;
+    var n = vec_len(sections);
+    while (i < n) {
+        var s = vec_get(sections, i);
+        if (str_eq_cstr(toml_section_name(s), name) == 1) {
+            return toml_section_pairs(s);
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn apkg_get_str(pairs, key) {
+    var s = toml_get(pairs, key);
+    if (s == 0) { return 0; }
+    return apkg_unescape_str(s);
+}
+
+fn apkg_get_int(pairs, key, fallback) {
+    var s = toml_get(pairs, key);
+    if (s == 0) { return fallback; }
+    return str_to_int(s);
+}
+
+# Parse an inline array of basic strings into a vec of cstr (un-escaped).
+fn apkg_parse_array(arr_str) {
+    var out = vec_new();
+    if (arr_str == 0) { return out; }
+    var data = str_data(arr_str);
+    var len = str_len(arr_str);
+    var pos = 0;
+    while (pos < len) {
+        if (load8(data + pos) == 34) {
+            pos = pos + 1;
+            var start = pos;
+            while (pos < len) {
+                if (load8(data + pos) == 34) { break; }
+                pos = pos + 1;
+            }
+            var slen = pos - start;
+            vec_push(out, apkg_unescape_bytes(data + start, slen));
+            pos = pos + 1;
+        } else {
+            pos = pos + 1;
+        }
+    }
+    return out;
+}
+
+fn apkg_get_arr(pairs, key) {
+    return apkg_parse_array(toml_get(pairs, key));
+}
+
+fn apkg_man_from_pairs(pairs) {
+    var m = alloc(104);
+    store64(m, apkg_get_str(pairs, "name"));
+    store64(m + 8, apkg_get_str(pairs, "version"));
+    store64(m + 16, apkg_get_int(pairs, "release", 1));
+    store64(m + 24, apkg_get_str(pairs, "description"));
+    store64(m + 32, apkg_get_str(pairs, "arch"));
+    store64(m + 40, apkg_get_int(pairs, "size_installed", 0));
+    store64(m + 48, apkg_get_int(pairs, "build_date", 0));
+    store64(m + 56, apkg_get_str(pairs, "builder"));
+    store64(m + 64, apkg_get_str(pairs, "source_url"));
+    store64(m + 72, apkg_get_str(pairs, "source_hash"));
+    store64(m + 80, apkg_get_str(pairs, "license"));
+    store64(m + 88, apkg_get_arr(pairs, "groups"));
+    store64(m + 96, apkg_get_arr(pairs, "depends"));
+    return m;
+}
+
+# --- reader -----------------------------------------------------------
+# Read + fully verify a `.ark` file. Returns an ark package handle on
+# success, or 0 if the file is malformed, the version is unknown, the
+# root hash mismatches, the signature fails, or any per-file content
+# hash mismatches. `max_len` caps the read (whole file buffered in
+# memory — see the ADR's size note).
+fn ark_pkg_read(path_cstr, max_len) {
+    var buf = alloc(max_len);
+    var flen = file_read_all(path_cstr, buf, max_len);
+    if (flen < ARK_HEADER_LEN) { return 0; }
+
+    # Header: magic + version.
+    if (apkg_u8(buf, 0) != 0x89) { return 0; }
+    if (apkg_u8(buf, 1) != 65) { return 0; }
+    if (apkg_u8(buf, 2) != 82) { return 0; }
+    if (apkg_u8(buf, 3) != 75) { return 0; }
+    if (apkg_u16(buf, 4) != ARK_FORMAT_VERSION) { return 0; }
+    var flags = apkg_u16(buf, 6);
+    var signed = flags & ARK_FLAG_SIGNED;
+    var compressed = flags & ARK_FLAG_COMPRESSED;
+
+    # Trailer geometry: [root 32][has_sig 1][pubkey 32][sig 64]?
+    var trailer = 33;
+    if (signed != 0) { trailer = trailer + 96; }
+    var r = flen - trailer;
+    if (r < ARK_HEADER_LEN) { return 0; }
+
+    # Verify the SHA-256 root hash over the prefix [0, R).
+    sha256_global_init();
+    var ctx = sha256_init();
+    sha256_update(ctx, buf, r);
+    var calc = alloc(32);
+    sha256_finalize(ctx, calc);
+    fl_free(ctx);
+    if (memeq(calc, buf + r, 32) != 1) { return 0; }
+
+    # Verify the ed25519 signature over the root hash, if present.
+    var sig_hex = "";
+    if (signed != 0) {
+        var pk = buf + r + 33;
+        var sig = buf + r + 33 + 32;
+        if (ed25519_verify(pk, buf + r, 32, sig) != 1) { return 0; }
+        sig_hex = hex_encode(sig, 64);
+    }
+
+    # Manifest (uncompressed TOML).
+    var off = ARK_HEADER_LEN;
+    var mlen = apkg_u32(buf, off);
+    off = off + 4;
+    var mstr = str_new(buf + off, mlen);
+    off = off + mlen;
+    var sections = toml_parse(mstr);
+    var pairs = apkg_find_section(sections, "manifest");
+    if (pairs == 0) { return 0; }
+    var manifest = apkg_man_from_pairs(pairs);
+
+    # File index.
+    var count = apkg_u32(buf, off);
+    off = off + 4;
+    var entries = vec_new();
+    var i = 0;
+    while (i < count) {
+        var ft = apkg_u8(buf, off); off = off + 1;
+        var eflags = apkg_u8(buf, off); off = off + 1;
+        var plen = apkg_u32(buf, off); off = off + 4;
+        var path = alloc(plen + 1);
+        memcpy(path, buf + off, plen);
+        store8(path + plen, 0);
+        off = off + plen;
+        var size = apkg_u64(buf, off); off = off + 8;
+        var sha_hex = "";
+        if ((eflags & 1) != 0) {
+            sha_hex = hex_encode(buf + off, 32);
+            off = off + 32;
+        }
+        var target = 0;
+        if ((eflags & 2) != 0) {
+            var tlen = apkg_u32(buf, off); off = off + 4;
+            target = alloc(tlen + 1);
+            memcpy(target, buf + off, tlen);
+            store8(target + tlen, 0);
+            off = off + tlen;
+        }
+        var doff = apkg_u64(buf, off); off = off + 8;
+        vec_push(entries, apkg_afe_new(path, sha_hex, size, ft, target, doff));
+        i = i + 1;
+    }
+
+    # Data block: inflate.
+    var u_len = apkg_u64(buf, off); off = off + 8;
+    var c_len = apkg_u64(buf, off); off = off + 8;
+    var data = 0;
+    if (u_len > 0) {
+        data = alloc(u_len);
+        if (compressed != 0) {
+            var n = deflate_decompress(buf + off, c_len, data, u_len);
+            if (n != u_len) { return 0; }
+        } else {
+            memcpy(data, buf + off, u_len);
+        }
+    }
+
+    # Re-verify each payload's content hash against the index.
+    i = 0;
+    var cursor = 0;
+    while (i < count) {
+        var e = vec_get(entries, i);
+        if (apkg_afe_has_payload(e) == 1) {
+            var sz = apkg_afe_size(e);
+            var hh = apkg_afe_sha256(e);
+            if (hh != 0) {
+                if (strlen(hh) == 64) {
+                    sha256_global_init();
+                    var c2 = sha256_init();
+                    sha256_update(c2, data + cursor, sz);
+                    var dg = alloc(32);
+                    sha256_finalize(c2, dg);
+                    fl_free(c2);
+                    var want = alloc(32);
+                    hex_decode_into(hh, 64, want);
+                    if (memeq(dg, want, 32) != 1) { return 0; }
+                }
+            }
+            cursor = cursor + sz;
+        }
+        i = i + 1;
+    }
+
+    # Whole-data hash (matches takumi's data_hash field).
+    var data_hash = "";
+    if (u_len > 0) {
+        sha256_global_init();
+        var c3 = sha256_init();
+        sha256_update(c3, data, u_len);
+        var dh = alloc(32);
+        sha256_finalize(c3, dh);
+        fl_free(c3);
+        data_hash = hex_encode(dh, 32);
+    }
+    return apkg_new(manifest, sig_hex, entries, data_hash, data, u_len);
+}

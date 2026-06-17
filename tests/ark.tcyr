@@ -8,6 +8,7 @@ include "src/db.cyr"
 include "src/engine.cyr"
 include "src/exec.cyr"
 include "src/recipe.cyr"
+include "src/ark_package.cyr"
 include "src/bazaar.cyr"
 include "src/cli.cyr"
 
@@ -709,6 +710,68 @@ fn test_exec() {
     assert(str_contains(ares_message(rnw), str_from("not yet wired")), "not-wired msg");
 }
 
+fn test_ark_package() {
+    test_group("ark_package");
+
+    # --- signed fixture: full read + verify (root hash + sig + per-file) ---
+    var p = ark_pkg_read("tests/fixtures/sample-signed.ark", 1048576);
+    assert(p != 0, "signed fixture reads + verifies");
+    var m = apkg_manifest(p);
+    assert(str_eq_cstr(str_from("myapp"), apkg_man_name(m)), "manifest name");
+    assert(str_eq_cstr(str_from("2.1.0"), apkg_man_version(m)), "manifest version");
+    assert(str_eq_cstr(str_from("GPL-3.0-only"), apkg_man_license(m)), "manifest license");
+    assert(str_eq_cstr(str_from("x86_64"), apkg_man_arch(m)), "manifest arch");
+    assert_eq(apkg_man_release(m), 1, "manifest release");
+    assert_eq(apkg_man_build_date(m), 1700000000, "manifest build_date");
+    # description exercises TOML escape/unescape (embedded quote + newline)
+    assert(str_eq_cstr(str_from("needs \"quotes\" and\na newline"),
+                       apkg_man_description(m)), "description unescaped losslessly");
+    # groups / depends arrays
+    assert_eq(vec_len(apkg_man_groups(m)), 2, "groups count");
+    assert(str_eq_cstr(str_from("base"), vec_get(apkg_man_groups(m), 0)), "groups[0]");
+    assert(str_eq_cstr(str_from("net"), vec_get(apkg_man_groups(m), 1)), "groups[1]");
+    assert_eq(vec_len(apkg_man_depends(m)), 1, "depends count");
+    assert(str_eq_cstr(str_from("libc"), vec_get(apkg_man_depends(m), 0)), "depends[0]");
+
+    # --- file index ---
+    var fs = apkg_entries(p);
+    assert_eq(vec_len(fs), 2, "file count");
+    var e0 = vec_get(fs, 0);
+    assert(str_eq_cstr(str_from("/etc/app.conf"), apkg_afe_path(e0)), "entry0 path");
+    assert_eq(apkg_afe_file_type(e0), ARK_FT_CONFIG, "entry0 is config");
+    assert_eq(apkg_afe_size(e0), 10, "entry0 size");
+    assert_eq(strlen(apkg_afe_sha256(e0)), 64, "entry0 has sha256");
+    var e1 = vec_get(fs, 1);
+    assert(str_eq_cstr(str_from("/usr/bin/app"), apkg_afe_path(e1)), "entry1 path");
+    assert_eq(apkg_afe_file_type(e1), ARK_FT_REGULAR, "entry1 is regular");
+
+    # --- payload extraction: inflated data + offsets ---
+    assert_eq(apkg_data_len(p), 28, "inflated data len (10 + 18)");
+    var data = apkg_data(p);
+    # entry0 payload starts at its data_offset, length = size
+    var conf = str_new(data + apkg_afe_data_offset(e0), apkg_afe_size(e0));
+    assert(str_eq(conf, str_from("port=8080\n")), "entry0 payload extracted");
+
+    # --- signature present on signed package ---
+    assert(strlen(apkg_sig_hex(p)) == 128, "signed: 64-byte sig as hex");
+
+    # --- unsigned fixture: verifies, no signature ---
+    var u = ark_pkg_read("tests/fixtures/sample-unsigned.ark", 1048576);
+    assert(u != 0, "unsigned fixture reads + verifies");
+    assert_eq(strlen(apkg_sig_hex(u)), 0, "unsigned: no signature");
+
+    # --- tamper detection: flip a manifest byte -> root hash mismatch -> 0 ---
+    var tbuf = alloc(1048576);
+    var tn = file_read_all("tests/fixtures/sample-signed.ark", tbuf, 1048576);
+    assert(tn > 0, "tamper: read fixture");
+    store8(tbuf + 20, load8(tbuf + 20) ^ 0xFF);
+    file_write_all("/tmp/ark-tamper.ark", tbuf, tn);
+    assert_eq(ark_pkg_read("/tmp/ark-tamper.ark", 1048576), 0, "tampered -> 0");
+
+    # --- truncated / garbage input is rejected, not crashed ---
+    assert_eq(ark_pkg_read("/nonexistent/path.ark", 1048576), 0, "missing file -> 0");
+}
+
 # =========================================================================
 # Main test runner
 # =========================================================================
@@ -726,6 +789,7 @@ fn test_main() {
     test_recipes();
     test_manager();
     test_exec();
+    test_ark_package();
     return assert_summary();
 }
 

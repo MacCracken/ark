@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.8.4] - 2026-06-17
+
+### Added
+
+- **`.ark` v1 package reader** (`src/ark_package.cyr`) — ark can now read the binary package format takumi produces (takumi `docs/adr/0001-ark-binary-format.md`). `ark_pkg_read(path, max_len)`:
+  - Verifies the SHA-256 **root hash** over the file prefix and, when present, the **ed25519 signature** over that root hash; returns 0 (not a crash) on any mismatch, unknown version, or malformed/missing file.
+  - Parses the embedded **manifest** TOML via `bayan`, with symmetric un-escaping (bayan delimits but doesn't un-escape) — quotes/newlines/tabs roundtrip losslessly.
+  - Parses the **file index** (type, flags, path, size, sha256, symlink target, data offset) and inflates the **DEFLATE** data block (`sankoch`), then re-verifies every per-file content hash against the index.
+  - Exposes manifest (`apkg_man_*`), file entries (`apkg_afe_*`), and the inflated payload (`apkg_data`/`apkg_afe_data_offset`) for extraction.
+  - Added stdlib deps `sankoch` (deflate) and `sync` (mutex, pulled by sankoch).
+  - 28 new tests (232 total) against **real takumi-produced fixtures** (`tests/fixtures/sample-{signed,unsigned}.ark`): full verify, manifest/escape roundtrip, file index, payload extraction, signature presence, and tamper detection (flip a byte → read returns 0).
+
+Reader only — installing from a `.ark` (laying down files, recording to `PackageDb`) wires up in a later bite.
+
 ## [0.8.3] - 2026-06-16
 
 ### Added

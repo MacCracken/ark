@@ -1,6 +1,6 @@
 [package]
 name = "ark"
-version = "0.8.3"
+version = "0.8.4"
 description = "ark - Cyrius port"
 license = "GPL-3.0-only"
 language = "cyrius"
@@ -12,7 +12,7 @@ output = "ark"
 defines = ["ARK_MAIN"]
 
 [deps]
-stdlib = ["string", "fmt", "alloc", "vec", "str", "slice", "syscalls", "io", "args", "assert", "hashmap", "tagged", "fs", "freelist", "chrono", "process", "result", "fnptr", "bench", "bayan", "ct", "random", "keccak", "thread_local"]
+stdlib = ["string", "fmt", "alloc", "vec", "str", "slice", "syscalls", "io", "args", "assert", "hashmap", "tagged", "fs", "freelist", "chrono", "process", "result", "fnptr", "bench", "bayan", "ct", "random", "keccak", "thread_local", "sankoch", "sync"]
 
 [deps.sigil]
 git = "https://github.com/MacCracken/sigil.git"
