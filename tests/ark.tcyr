@@ -655,9 +655,20 @@ fn test_exec() {
     assert_eq(vec_len(a5), 2, "update argv len 2");
     assert(str_eq(vec_get(a5, 1), str_from("update")), "update verb");
 
-    # --- not-yet-wired backends return 0 ---
-    assert_eq(step_to_argv(step_marketplace_install(str_from("x"), str_from(""))), 0, "marketplace not wired");
-    assert_eq(step_to_argv(step_flutter_install(str_from("x"), str_from(""))), 0, "flutter not wired");
+    # --- Flutter (agpkg) lowering ---
+    var af = step_to_argv(step_flutter_install(str_from("myapp"), str_from("")));
+    assert(af != 0, "flutter install lowered");
+    assert_eq(vec_len(af), 3, "flutter argv len 3");
+    assert(str_eq(vec_get(af, 0), str_from("agpkg")), "flutter argv[0] agpkg");
+    assert(str_eq(vec_get(af, 1), str_from("install")), "flutter argv[1] install");
+    assert(str_eq(vec_get(af, 2), str_from("myapp")), "flutter argv[2] pkg");
+    var afr = step_to_argv(step_flutter_remove(str_from("myapp")));
+    assert(str_eq(vec_get(afr, 1), str_from("remove")), "flutter remove verb");
+    # Flutter is unprivileged — runs directly, no shakti wrap
+    assert_eq(step_needs_root(step_flutter_install(str_from("x"), str_from(""))), 0, "flutter no root");
+
+    # --- marketplace: NOT a shell step (native .ark installer, see ADR 0002) ---
+    assert_eq(step_to_argv(step_marketplace_install(str_from("x"), str_from(""))), 0, "marketplace -> native installer, not shell");
 
     # --- privilege classification ---
     assert_eq(step_needs_root(step_system_install(str_from("x"), str_from(""))), 1, "system needs root");

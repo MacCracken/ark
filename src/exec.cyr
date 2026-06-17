@@ -87,7 +87,25 @@ fn step_to_argv(step) {
         vec_push(argv, str_from("update"));
         return argv;
     }
-    # marketplace (takumi) / flutter (agpkg): not yet wired
+    # Flutter apps install via the agpkg tool (unprivileged — no shakti).
+    if (tag == STEP_FLUTTER_INSTALL) {
+        vec_push(argv, str_from("agpkg"));
+        vec_push(argv, str_from("install"));
+        vec_push(argv, pkg);
+        # NOTE: agpkg's version-pin syntax is TBD; pin once its CLI is fixed.
+        return argv;
+    }
+    if (tag == STEP_FLUTTER_REMOVE) {
+        vec_push(argv, str_from("agpkg"));
+        vec_push(argv, str_from("remove"));
+        vec_push(argv, pkg);
+        return argv;
+    }
+    # Marketplace / community packages are takumi-built `.ark` artifacts.
+    # There is no external "install" command to exec: ark installs them via
+    # its own native `.ark` installer (extract + register to PackageDb), not
+    # through step_to_argv. Returning 0 signals "not a shell step" — the
+    # executor routes these to the native installer once it lands.
     return 0;
 }
 
@@ -158,7 +176,7 @@ fn exec_plan(mgr, iplan, dry_run) {
             var msg = str_builder_new();
             str_builder_add_cstr(msg, "step backend not yet wired for '");
             str_builder_add(msg, pkg);
-            str_builder_add_cstr(msg, "' (marketplace/flutter execution pending)");
+            str_builder_add_cstr(msg, "' (marketplace install uses the native .ark installer, pending)");
             var emsg = str_builder_build(msg);
             if (dry_run == 0) { txn_log_fail(log, tid, emsg); }
             return ark_result_new(0, emsg, affected, step_source(step));

@@ -83,6 +83,12 @@
 - [x] 28 tests (232 total) against real takumi fixtures (`tests/fixtures/sample-{signed,unsigned}.ark`); tamper detection covered
 - [ ] Next: install from `.ark` — extract payloads to disk + record to `PackageDb` (consumes the reader)
 
+### v0.8.5 (2026-06-17) - Toolchain pin + Flutter lowering
+
+- [x] Toolchain pin `6.2.12` → `6.2.18` (drift cleared); lib re-synced, deps re-resolved, 238 tests green
+- [x] Flutter (agpkg) step lowering — `agpkg install/remove <pkg>`, unprivileged
+- [x] Marketplace lowering re-scoped: native `.ark` installer, not a shell step (review outcome)
+
 ### Capability inventory (verified against code 2026-06-16)
 
 These were on the backlog but are implemented and tested in the tree today:
@@ -104,37 +110,18 @@ These were on the backlog but are implemented and tested in the tree today:
 ## Backlog
 
 ### Execution backend (the critical path)
-- [ ] **Step executor: plan → shakti → system** — run each `InstallStep`; gate privileged plans (`iplan_root == 1`) through the setuid `shakti` binary via `process.cyr`; capture exit code, record transaction, verify integrity post-step (see [ADR 0001](../adr/0001-shakti-execution-backend.md))
-- [ ] **System backend seam** ([ADR 0002](../adr/0002-package-source-model.md)) — thread a `system_backend` mode (`apt` / `apt-agnos` / `native`) through `ArkConfig` + executor lowering + nous source selection. Cheap now, expensive to retrofit; gates the `apt-agnos` bridge below
-- [ ] **`apt-agnos` bridge** — route apt through the AGNOS syscall wrapper so AGNOS can use ark for system packages *before* the v2 native backend lands
+- [x] **Step executor: plan → shakti → system** (0.8.3, bites 1–2) — `src/exec.cyr` lowers steps, wraps privileged ones as `shakti -- …`, runs via `process.cyr`, records each to the transaction log; `--apply`/`--dry-run` wired into the CLI with confirm gating (see [ADR 0001](../adr/0001-shakti-execution-backend.md))
+- [x] **Flutter (agpkg) lowering** (0.8.5) — `STEP_FLUTTER_*` → `agpkg install/remove <pkg>`, unprivileged (no shakti). Marketplace is *not* a shell lowering: takumi builds `.ark`, ark installs it natively (see "Install from `.ark`")
 - [ ] **Install from `.ark`** — extract verified payloads to disk + record files/owner/hashes to `PackageDb` (consumes the 0.8.4 reader; the native-install execution target for ADR 0002's `native` mode)
-- [ ] Rollback **execution** (reverse plan exists; needs the executor to run it)
+- [ ] **Real `--apply` on target** — exercise the full apt+shakti path on a host that has both (blocked on a Debian/AGNOS target or a stubbed-shakti e2e harness)
+- [ ] Rollback **execution** — `ark_rollback` is wired through the executor; needs a test exercising it
+- [ ] **System backend seam** ([ADR 0002](../adr/0002-package-source-model.md)) — `system_backend` mode (`apt` / `apt-agnos` / `native`); gates the `apt-agnos` bridge
+- [ ] **`apt-agnos` bridge** — route apt through the AGNOS syscall wrapper so AGNOS can use ark before the v2 native backend lands
 - [ ] Plan signing for shakti verification (sign the plan ark hands off)
-- [ ] Dry-run / `--simulate` mode for the executor
 
 ### `.ark` package format — consume takumi output
-takumi 0.8.2 produces signed, compressed `.ark` v1 archives; ark needs the
-reader/installer that consumes them. The on-disk format is frozen and
-specified in **takumi `docs/adr/0001-ark-binary-format.md`**, with a reference
-reader (`ark_read`) and a roundtrip/tamper/determinism conformance suite in
-**takumi `src/ark_format.cyr`** / `tests/takumi.tcyr`.
-
-- [ ] **`.ark` v1 reader** — parse the little-endian header (magic
-  `0x89 'A' 'R' 'K'`, version, flags), the `[[manifest]]` TOML block (via
-  `bayan`, with takumi's symmetric un-escaping), the file index, and the
-  DEFLATE data section (`sankoch`). Add `sankoch` + `sync` to ark's
-  `[deps] stdlib`.
-- [ ] **Integrity + signature verification on read** — recompute the SHA-256
-  root hash over `[0, R)`, verify the trailing ed25519 signature (sigil)
-  against the trust policy, and re-check every per-file SHA-256. Reject on any
-  mismatch (the takumi tamper test is the conformance bar).
-- [ ] **Unpack + register** — materialize files to the fake-root honoring file
-  types (regular / directory / symlink / `/etc` config), then register the
-  package in `PackageDb` with per-file hashes and the signer key id (reuse
-  `pdbe_set_file_hash` / signature fields in `src/db.cyr`).
-- [ ] **Conformance test** — read every fixture takumi's roundtrip suite emits;
-  confirm manifest fields, file list, and signature verify, and that a
-  byte-flipped archive is rejected.
+- [x] **`.ark` v1 reader + integrity/signature verification** (0.8.4, `src/ark_package.cyr`) — header, `[[manifest]]` TOML (bayan + symmetric un-escape), file index, DEFLATE inflate (`sankoch`), SHA-256 root-hash + ed25519 verify, per-file hash re-check. Conformance-tested against real takumi fixtures incl. tamper detection.
+- [ ] **Unpack + register** — materialize files honoring type (regular / directory / symlink / `/etc` config), then register in `PackageDb` with per-file hashes + signer key id. (Same work as "Install from `.ark`" above.)
 
 ### Marketplace & community
 - [ ] Marketplace package download + SHA-256/signature verification (no HTTP/fetch path yet)

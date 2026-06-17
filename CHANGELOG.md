@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.8.5] - 2026-06-17
+
+### Changed
+
+- **Toolchain pin 6.2.12 → 6.2.18** (`.cyrius-toolchain`, `cyrius.cyml`) — matches the installed wrapper, clears the pin-drift warning. lib re-synced, deps re-resolved; 238-test suite green, build/lint/fmt clean.
+- **Marketplace lowering re-scoped (review outcome).** `STEP_MARKETPLACE_INSTALL`/`REMOVE` are *not* shell-command steps: takumi is a build-time engine (`recipe → takumi → .ark`), not an installer, so marketplace/community packages install via ark's own native `.ark` installer (extract + register), not via `step_to_argv`. The executor's sentinel message and code comments now reflect this; the work is tracked as "Install from `.ark`", not a lowering gap.
+
+### Added
+
+- **Flutter (agpkg) step lowering** (`src/exec.cyr`) — `STEP_FLUTTER_INSTALL`/`REMOVE` lower to `agpkg install <pkg>` / `agpkg remove <pkg>`, run unprivileged (no shakti wrap), matching ark's established display convention. 6 new tests (238 total) covering the argv and privilege classification. (agpkg's version-pin syntax is left TBD until its CLI is fixed.)
+
 ## [0.8.4] - 2026-06-17
 
 ### Added
