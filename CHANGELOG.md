@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.8.7] - 2026-06-17
+
+### Added
+
+- **`ark install ./pkg.ark` — local `.ark` install from the CLI.** A single install argument ending in `.ark` is routed (in `ark_execute`) to the native installer (`ark_install_local` → `ark_pkg_install`) instead of nous resolution. Verified end-to-end: `ark install <file>.ark` reads, verifies, materializes, and registers the package.
+- **`--root <dir>` flag** on `install` — stages the install under a directory instead of the real root (`ArkCommand.root`). Unprivileged-friendly for testing/inspection; the default (real root) needs appropriate privilege.
+- 6 new tests (257 total): `.ark` path detection (`apkg_is_ark_path`, suffix-exact), `ark_execute` routing of a `.ark` arg, and materialization + `PackageDb` registration via the command path.
+
+### Notes
+
+- Routing `STEP_MARKETPLACE_INSTALL` through the installer remains blocked on the marketplace **download** path (no `.ark` to install until fetch exists) — local install is the working entry point today.
+
 ## [0.8.6] - 2026-06-17
 
 ### Added

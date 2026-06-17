@@ -27,7 +27,11 @@ fn parse_args(ac, av) {
                 acmd_set_tag(c, CMD_GROUP_INSTALL);
                 acmd_set_group(c, str_from(argv(i)));
             } elif (streq(arg, "--apply") || streq(arg, "--dry-run")) { }
-            elif (load8(arg) != 45) { vec_push(acmd_packages(c), str_from(arg)); }
+            elif (streq(arg, "--root")) {
+                i = i + 1;
+                if (i >= ac) { println("--root requires a directory"); return 0; }
+                acmd_set_root(c, str_from(argv(i)));
+            } elif (load8(arg) != 45) { vec_push(acmd_packages(c), str_from(arg)); }
             else { println("Unknown flag for install"); return 0; }
             i = i + 1;
         }

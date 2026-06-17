@@ -138,7 +138,16 @@ fn ark_mgr_new(config) {
 
 fn ark_execute(mgr, cmd) {
     var tag = acmd_tag(cmd);
-    if (tag == CMD_INSTALL) { return ark_install(mgr, acmd_packages(cmd), acmd_force(cmd)); }
+    if (tag == CMD_INSTALL) {
+        var ipkgs = acmd_packages(cmd);
+        # A single `.ark` path argument is a direct local install.
+        if (vec_len(ipkgs) == 1) {
+            if (apkg_is_ark_path(vec_get(ipkgs, 0)) == 1) {
+                return ark_install_local(mgr, vec_get(ipkgs, 0), acmd_root(cmd));
+            }
+        }
+        return ark_install(mgr, ipkgs, acmd_force(cmd));
+    }
     if (tag == CMD_GROUP_INSTALL) {
         var meta = group_meta_package(str_data(acmd_group(cmd)));
         if (meta == 0) { meta = str_data(acmd_group(cmd)); }

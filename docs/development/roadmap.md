@@ -95,6 +95,12 @@
 - [x] 13 tests (251 total) against the signed fixture into a temp root
 - [ ] Next: wire behind `STEP_MARKETPLACE_INSTALL` + `ark install ./pkg.ark` CLI
 
+### v0.8.7 (2026-06-17) - CLI local `.ark` install
+
+- [x] `ark install ./pkg.ark` routes to the native installer (`ark_install_local`); `--root <dir>` staging flag
+- [x] 6 tests (257 total): path detection, `ark_execute` routing, materialize + register
+- [ ] Next functional gap: marketplace **download** (fetch a `.ark` to install), then route `STEP_MARKETPLACE_INSTALL`
+
 ### Capability inventory (verified against code 2026-06-16)
 
 These were on the backlog but are implemented and tested in the tree today:
@@ -119,7 +125,8 @@ These were on the backlog but are implemented and tested in the tree today:
 - [x] **Step executor: plan → shakti → system** (0.8.3, bites 1–2) — `src/exec.cyr` lowers steps, wraps privileged ones as `shakti -- …`, runs via `process.cyr`, records each to the transaction log; `--apply`/`--dry-run` wired into the CLI with confirm gating (see [ADR 0001](../adr/0001-shakti-execution-backend.md))
 - [x] **Flutter (agpkg) lowering** (0.8.5) — `STEP_FLUTTER_*` → `agpkg install/remove <pkg>`, unprivileged (no shakti). Marketplace is *not* a shell lowering: takumi builds `.ark`, ark installs it natively (see "Install from `.ark`")
 - [x] **Install from `.ark`** (0.8.6, `ark_pkg_install`) — materialize verified payloads under a configurable root (dirs/regular/config/symlink) + register to `PackageDb` (version, files, per-file hashes, signature) + transaction record
-- [ ] Wire install-from-`.ark` behind `STEP_MARKETPLACE_INSTALL` + a CLI path (`ark install ./pkg.ark`)
+- [x] **CLI: `ark install ./pkg.ark`** (0.8.7) — local `.ark` install with `--root <dir>` staging; routed in `ark_execute` → `ark_install_local`
+- [ ] Wire install-from-`.ark` behind `STEP_MARKETPLACE_INSTALL` (blocked on the marketplace download path — no `.ark` to fetch yet)
 - [ ] **Real `--apply` on target** — exercise the full apt+shakti path on a host that has both (blocked on a Debian/AGNOS target or a stubbed-shakti e2e harness)
 - [ ] Rollback **execution** — `ark_rollback` is wired through the executor; needs a test exercising it
 - [ ] **System backend seam** ([ADR 0002](../adr/0002-package-source-model.md)) — `system_backend` mode (`apt` / `apt-agnos` / `native`); gates the `apt-agnos` bridge

@@ -361,6 +361,22 @@ fn ark_pkg_read(path_cstr, max_len) {
 # --- installer --------------------------------------------------------
 # Materializes a verified `.ark` to disk and registers it in PackageDb.
 
+# Whether an install target string is a local `.ark` file path.
+fn apkg_is_ark_path(s) {
+    return str_ends_with(s, str_from(".ark"));
+}
+
+# CLI entry: install a local `.ark` file. `root_str` "" (or empty) installs
+# to the real root; a non-empty value stages under that directory. The
+# 128 MiB cap bounds the in-memory read (see the ADR's size note).
+fn ark_install_local(mgr, path_str, root_str) {
+    var root = "";
+    if (root_str != 0) {
+        if (str_len(root_str) > 0) { root = str_data(root_str); }
+    }
+    return ark_pkg_install(mgr, str_data(path_str), root, 134217728);
+}
+
 # Concatenate install_root + package path into a fresh cstr. Package
 # paths carry a leading slash, so root "" yields the real absolute path
 # and root "/tmp/x" yields a rooted path (for tests / staging).

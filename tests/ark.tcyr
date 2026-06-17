@@ -825,6 +825,31 @@ fn test_ark_install() {
     assert_eq(ares_success(bad), 0, "missing package -> failure");
 }
 
+fn test_ark_install_cli() {
+    test_group("ark_install_cli");
+
+    # `.ark` path detection (only a real .ark suffix routes to local install)
+    assert(apkg_is_ark_path(str_from("/x/foo.ark")) == 1, ".ark path detected");
+    assert(apkg_is_ark_path(str_from("nginx")) == 0, "plain name is not a .ark path");
+    assert(apkg_is_ark_path(str_from("foo.ark.txt")) == 0, "non-suffix is not a .ark path");
+
+    # ark_execute routes a single `.ark` install arg to the local installer
+    var cfg = ark_config_default();
+    store64(cfg + 40, str_from("/tmp/ark-cli-mkt"));
+    store64(cfg + 48, str_from("/tmp/ark-cli-cache"));
+    store64(cfg + 56, str_from("/tmp/ark-cli-db.json"));
+    store64(cfg + 64, str_from("/tmp/ark-cli-txn.log"));
+    var mgr = ark_mgr_new(cfg);
+
+    var cmd = ark_cmd_new(CMD_INSTALL);
+    vec_push(acmd_packages(cmd), str_from("tests/fixtures/sample-unsigned.ark"));
+    acmd_set_root(cmd, str_from("/tmp/ark-cli-root"));
+    var res = ark_execute(mgr, cmd);
+    assert_eq(ares_success(res), 1, "cli local install succeeds");
+    assert(file_exists("/tmp/ark-cli-root/usr/bin/app"), "cli install materialized file");
+    assert(pkg_db_is_installed(amgr_db(mgr), str_from("myapp")), "cli install registered in db");
+}
+
 # =========================================================================
 # Main test runner
 # =========================================================================
@@ -844,6 +869,7 @@ fn test_main() {
     test_exec();
     test_ark_package();
     test_ark_install();
+    test_ark_install_cli();
     return assert_summary();
 }
 

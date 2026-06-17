@@ -16,7 +16,7 @@
 # Constants
 # =========================================================================
 
-var ARK_VERSION_STR = "0.8.6";
+var ARK_VERSION_STR = "0.8.7";
 
 var DEFAULT_TRANSACTION_LOG_PATH = "/var/lib/agnos/ark/transaction.log";
 var DEFAULT_PACKAGE_DB_PATH = "/var/lib/agnos/ark/packages.json";
@@ -90,7 +90,7 @@ enum ArkCommandTag {
     CMD_BAZAAR = 18;
 }
 
-var ACMD_SZ = 72;
+var ACMD_SZ = 80;
 
 fn acmd_tag(p) { return load64(p); }
 fn acmd_set_tag(p, v) { store64(p, v); }
@@ -110,6 +110,9 @@ fn acmd_purge(p) { return load64(p + 56); }
 fn acmd_set_purge(p, v) { store64(p + 56, v); }
 fn acmd_count(p) { return load64(p + 64); }
 fn acmd_set_count(p, v) { store64(p + 64, v); }
+# Install root for local `.ark` install (`--root DIR`); "" = real root.
+fn acmd_root(p) { return load64(p + 72); }
+fn acmd_set_root(p, v) { store64(p + 72, v); }
 
 fn ark_cmd_new(tag) {
     var p = alloc(ACMD_SZ);
@@ -122,6 +125,7 @@ fn ark_cmd_new(tag) {
     acmd_set_force(p, 0);
     acmd_set_purge(p, 0);
     acmd_set_count(p, 0 - 1);
+    acmd_set_root(p, str_from(""));
     return p;
 }
 # =========================================================================
