@@ -89,6 +89,12 @@
 - [x] Flutter (agpkg) step lowering — `agpkg install/remove <pkg>`, unprivileged
 - [x] Marketplace lowering re-scoped: native `.ark` installer, not a shell step (review outcome)
 
+### v0.8.6 (2026-06-17) - Install from `.ark`
+
+- [x] `ark_pkg_install` — read+verify `.ark`, materialize files under a configurable root (dirs/regular/config/symlink, recursive `mkdir -p`), register to `PackageDb` (version/files/per-file hashes/signature), record transaction
+- [x] 13 tests (251 total) against the signed fixture into a temp root
+- [ ] Next: wire behind `STEP_MARKETPLACE_INSTALL` + `ark install ./pkg.ark` CLI
+
 ### Capability inventory (verified against code 2026-06-16)
 
 These were on the backlog but are implemented and tested in the tree today:
@@ -112,7 +118,8 @@ These were on the backlog but are implemented and tested in the tree today:
 ### Execution backend (the critical path)
 - [x] **Step executor: plan → shakti → system** (0.8.3, bites 1–2) — `src/exec.cyr` lowers steps, wraps privileged ones as `shakti -- …`, runs via `process.cyr`, records each to the transaction log; `--apply`/`--dry-run` wired into the CLI with confirm gating (see [ADR 0001](../adr/0001-shakti-execution-backend.md))
 - [x] **Flutter (agpkg) lowering** (0.8.5) — `STEP_FLUTTER_*` → `agpkg install/remove <pkg>`, unprivileged (no shakti). Marketplace is *not* a shell lowering: takumi builds `.ark`, ark installs it natively (see "Install from `.ark`")
-- [ ] **Install from `.ark`** — extract verified payloads to disk + record files/owner/hashes to `PackageDb` (consumes the 0.8.4 reader; the native-install execution target for ADR 0002's `native` mode)
+- [x] **Install from `.ark`** (0.8.6, `ark_pkg_install`) — materialize verified payloads under a configurable root (dirs/regular/config/symlink) + register to `PackageDb` (version, files, per-file hashes, signature) + transaction record
+- [ ] Wire install-from-`.ark` behind `STEP_MARKETPLACE_INSTALL` + a CLI path (`ark install ./pkg.ark`)
 - [ ] **Real `--apply` on target** — exercise the full apt+shakti path on a host that has both (blocked on a Debian/AGNOS target or a stubbed-shakti e2e harness)
 - [ ] Rollback **execution** — `ark_rollback` is wired through the executor; needs a test exercising it
 - [ ] **System backend seam** ([ADR 0002](../adr/0002-package-source-model.md)) — `system_backend` mode (`apt` / `apt-agnos` / `native`); gates the `apt-agnos` bridge
@@ -121,7 +128,7 @@ These were on the backlog but are implemented and tested in the tree today:
 
 ### `.ark` package format — consume takumi output
 - [x] **`.ark` v1 reader + integrity/signature verification** (0.8.4, `src/ark_package.cyr`) — header, `[[manifest]]` TOML (bayan + symmetric un-escape), file index, DEFLATE inflate (`sankoch`), SHA-256 root-hash + ed25519 verify, per-file hash re-check. Conformance-tested against real takumi fixtures incl. tamper detection.
-- [ ] **Unpack + register** — materialize files honoring type (regular / directory / symlink / `/etc` config), then register in `PackageDb` with per-file hashes + signer key id. (Same work as "Install from `.ark`" above.)
+- [x] **Unpack + register** (0.8.6) — materialize files honoring type, register in `PackageDb` with per-file hashes + signature (`ark_pkg_install`)
 
 ### Marketplace & community
 - [ ] Marketplace package download + SHA-256/signature verification (no HTTP/fetch path yet)

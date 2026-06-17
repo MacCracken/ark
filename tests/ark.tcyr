@@ -783,6 +783,48 @@ fn test_ark_package() {
     assert_eq(ark_pkg_read("/nonexistent/path.ark", 1048576), 0, "missing file -> 0");
 }
 
+fn test_ark_install() {
+    test_group("ark_install");
+
+    # Manager with temp paths so nothing touches the real system.
+    var cfg = ark_config_default();
+    store64(cfg + 40, str_from("/tmp/ark-inst-mkt"));     # marketplace_dir
+    store64(cfg + 48, str_from("/tmp/ark-inst-cache"));   # cache_dir
+    store64(cfg + 56, str_from("/tmp/ark-inst-db.json")); # package_db_path
+    store64(cfg + 64, str_from("/tmp/ark-inst-txn.log")); # transaction_log_path
+    var mgr = ark_mgr_new(cfg);
+
+    var res = ark_pkg_install(mgr, "tests/fixtures/sample-signed.ark",
+                              "/tmp/ark-inst-root", 1048576);
+    assert_eq(ares_success(res), 1, "install succeeds");
+    assert(str_contains(ares_message(res), str_from("Installed myapp 2.1.0")), "install message");
+
+    # Files materialized under the install root, parents created.
+    assert(file_exists("/tmp/ark-inst-root/etc/app.conf"), "config file on disk");
+    assert(file_exists("/tmp/ark-inst-root/usr/bin/app"), "binary file on disk");
+
+    # Payload content is the verified bytes.
+    var rb = alloc(256);
+    var rn = file_read_all("/tmp/ark-inst-root/etc/app.conf", rb, 256);
+    assert(str_eq(str_new(rb, rn), str_from("port=8080\n")), "config content correct");
+
+    # Registered in PackageDb with version, files, per-file hash, signature.
+    var db = amgr_db(mgr);
+    assert(pkg_db_is_installed(db, str_from("myapp")), "registered in db");
+    var entry = pkg_db_get(db, "myapp");
+    assert(entry != 0, "entry retrievable");
+    assert(str_eq(pdbe_version(entry), str_from("2.1.0")), "db entry version");
+    assert_eq(vec_len(pdbe_files(entry)), 2, "db entry tracks 2 files");
+    var h = pdbe_get_file_hash(entry, str_from("/etc/app.conf"));
+    assert(h != 0, "per-file hash recorded");
+    assert_eq(str_len(h), 64, "per-file hash is sha256 hex");
+    assert(str_len(pdbe_signature(entry)) == 128, "signed package records signature");
+
+    # Reading a missing/garbage package fails cleanly (no install).
+    var bad = ark_pkg_install(mgr, "/nonexistent.ark", "/tmp/ark-inst-root", 1048576);
+    assert_eq(ares_success(bad), 0, "missing package -> failure");
+}
+
 # =========================================================================
 # Main test runner
 # =========================================================================
@@ -801,6 +843,7 @@ fn test_main() {
     test_manager();
     test_exec();
     test_ark_package();
+    test_ark_install();
     return assert_summary();
 }
 

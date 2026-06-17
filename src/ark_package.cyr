@@ -357,3 +357,133 @@ fn ark_pkg_read(path_cstr, max_len) {
     }
     return apkg_new(manifest, sig_hex, entries, data_hash, data, u_len);
 }
+
+# --- installer --------------------------------------------------------
+# Materializes a verified `.ark` to disk and registers it in PackageDb.
+
+# Concatenate install_root + package path into a fresh cstr. Package
+# paths carry a leading slash, so root "" yields the real absolute path
+# and root "/tmp/x" yields a rooted path (for tests / staging).
+fn apkg_join(root, path) {
+    var lr = strlen(root);
+    var lp = strlen(path);
+    var buf = alloc(lr + lp + 1);
+    if (lr > 0) { memcpy(buf, root, lr); }
+    if (lp > 0) { memcpy(buf + lr, path, lp); }
+    store8(buf + lr + lp, 0);
+    return buf;
+}
+
+# mkdir -p: create every path component of `path` (including itself).
+# Existing dirs (EEXIST) are ignored.
+fn apkg_mkdir_p(path) {
+    var n = strlen(path);
+    if (n == 0) { return 0; }
+    var buf = alloc(n + 1);
+    memcpy(buf, path, n);
+    store8(buf + n, 0);
+    var i = 1;
+    while (i < n) {
+        if (load8(buf + i) == 47) {
+            store8(buf + i, 0);
+            sys_mkdir(buf, 493);
+            store8(buf + i, 47);
+        }
+        i = i + 1;
+    }
+    sys_mkdir(buf, 493);
+    return 0;
+}
+
+# mkdir -p for the parent directory of a file path (everything up to the
+# last '/'). No-op if the path has no directory component.
+fn apkg_mkdir_parents(path) {
+    var n = strlen(path);
+    var last = 0 - 1;
+    var i = 0;
+    while (i < n) {
+        if (load8(path + i) == 47) { last = i; }
+        i = i + 1;
+    }
+    if (last <= 0) { return 0; }
+    var buf = alloc(last + 1);
+    memcpy(buf, path, last);
+    store8(buf + last, 0);
+    apkg_mkdir_p(buf);
+    return 0;
+}
+
+# Read + verify a `.ark`, lay its files down under `install_root_cstr`
+# (use "" for the real root), and register the package in the manager's
+# PackageDb with per-file hashes + signature. Records an install
+# transaction. Returns an ArkResult (success/0 on read/verify failure).
+fn ark_pkg_install(mgr, ark_path_cstr, install_root_cstr, max_len) {
+    var p = ark_pkg_read(ark_path_cstr, max_len);
+    if (p == 0) {
+        return ark_result_new(0, str_from("ark: package read or verification failed"),
+        vec_new(), SOURCE_MARKETPLACE);
+    }
+    var m = apkg_manifest(p);
+    var name = str_from(apkg_man_name(m));
+    var version = str_from(apkg_man_version(m));
+    var entry = db_entry_new(name, version, SOURCE_MARKETPLACE);
+    var files = pdbe_files(entry);
+    var data = apkg_data(p);
+    var entries = apkg_entries(p);
+
+    var i = 0;
+    var nfiles = 0;
+    while (i < vec_len(entries)) {
+        var e = vec_get(entries, i);
+        var pathc = apkg_afe_path(e);
+        var full = apkg_join(install_root_cstr, pathc);
+        var ft = apkg_afe_file_type(e);
+        if (ft == ARK_FT_DIRECTORY) {
+            apkg_mkdir_p(full);
+        } else {
+            if (ft == ARK_FT_SYMLINK) {
+                apkg_mkdir_parents(full);
+                sys_symlink(apkg_afe_symlink_target(e), full);
+            } else {
+                # REGULAR or CONFIG: write the verified payload bytes.
+                apkg_mkdir_parents(full);
+                file_write_all(full, data + apkg_afe_data_offset(e), apkg_afe_size(e));
+            }
+            # Record the owned package path + its content hash.
+            var pstr = str_from(pathc);
+            vec_push(files, pstr);
+            var hh = apkg_afe_sha256(e);
+            if (hh != 0) {
+                if (strlen(hh) == 64) { pdbe_set_file_hash(entry, pstr, str_from(hh)); }
+            }
+            nfiles = nfiles + 1;
+        }
+        i = i + 1;
+    }
+
+    pdbe_set_size(entry, apkg_man_size_installed(m));
+    var sig = apkg_sig_hex(p);
+    if (sig != 0) {
+        if (strlen(sig) > 0) { pdbe_set_signature(entry, str_from(sig)); }
+    }
+    pkg_db_register(amgr_db(mgr), entry);
+
+    # Record the install in the transaction log.
+    var log = amgr_log(mgr);
+    var tid = txn_log_begin(log, exec_current_user());
+    txn_log_add_op(log, tid, txn_op_new(OP_INSTALL, name, version, SOURCE_MARKETPLACE));
+    txn_log_mark_op_complete(log, tid, name);
+    txn_log_commit(log, tid);
+
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "Installed ");
+    str_builder_add(sb, name);
+    str_builder_add_cstr(sb, " ");
+    str_builder_add(sb, version);
+    str_builder_add_cstr(sb, " (");
+    str_builder_add_int(sb, nfiles);
+    str_builder_add_cstr(sb, " files)");
+    var affected = vec_new();
+    vec_push(affected, name);
+    return ark_result_new(1, str_builder_build(sb), affected, SOURCE_MARKETPLACE);
+}

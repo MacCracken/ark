@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.8.6] - 2026-06-17
+
+### Added
+
+- **Install from `.ark`** (`ark_pkg_install`, `src/ark_package.cyr`) — the native install path that consumes the 0.8.4 reader. Reads + fully verifies a `.ark` (root hash, signature, per-file hashes), then:
+  - **Materializes** every entry under a configurable install root (`""` = real root, or a staging dir for tests), honoring file type — directories (recursive `mkdir -p`), regular/config files (writes the verified payload bytes), and symlinks; parent directories are created as needed.
+  - **Registers** the package in `PackageDb` with version, the owned file list, per-file SHA-256 hashes (`pdbe_set_file_hash`), installed size, and the package signature.
+  - **Records** an install transaction (begin → op → commit).
+  - Returns a clean failure result (no partial install attempt) when the `.ark` is missing or fails verification.
+- 13 new tests (251 total): installs the signed fixture into a temp root and asserts files on disk, payload content, `PackageDb` registration (version, file count, per-file hash, signature), and clean failure on a missing package.
+
+This is the native-install execution target for ADR 0002's `native` mode and the install half of the marketplace/community path. Wiring it behind the executor's `STEP_MARKETPLACE_INSTALL` (and a CLI `ark install ./pkg.ark`) is a follow-up.
+
 ## [0.8.5] - 2026-06-17
 
 ### Changed
