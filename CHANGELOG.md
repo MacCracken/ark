@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.8.8] - 2026-06-17
+
+### Changed
+
+- **Toolchain pin 6.2.18 → 6.2.20** (`.cyrius-toolchain`, `cyrius.cyml`); lib re-synced, deps re-resolved. 257-test suite green, build/lint clean.
+- **sigil 3.7.16 → 3.8.0** — crypto crate bump; signed-`.ark` verification and the security suite (both exercise sigil's Ed25519 + SHA-256) confirm API compatibility. nous already at latest (1.2.7).
+
+### Notes
+
+- **mela 0.9.1 is now available** — AGNOS's marketplace layer (signed/integrity-checked/transparency-logged discovery + distribution). It is a *binary* project today (no `dist/` lib bundle), so it is **not** wired as an ark library dependency; ark will integrate with it via the marketplace **download** path (as an external tool or a future mela client bundle). Recorded in the roadmap; see "Marketplace & community".
+
 ## [0.8.7] - 2026-06-17
 
 ### Added

@@ -1,10 +1,10 @@
 [package]
 name = "ark"
-version = "0.8.7"
+version = "0.8.8"
 description = "ark - Cyrius port"
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "6.2.18"
+cyrius = "6.2.20"
 
 [build]
 entry = "src/main.cyr"
@@ -17,7 +17,7 @@ stdlib = ["string", "fmt", "alloc", "vec", "str", "slice", "syscalls", "io", "ar
 [deps.sigil]
 git = "https://github.com/MacCracken/sigil.git"
 path = "../sigil"
-tag = "3.7.16"
+tag = "3.8.0"
 modules = ["dist/sigil.cyr"]
 
 [deps.nous]

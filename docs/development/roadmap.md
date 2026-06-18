@@ -101,6 +101,12 @@
 - [x] 6 tests (257 total): path detection, `ark_execute` routing, materialize + register
 - [ ] Next functional gap: marketplace **download** (fetch a `.ark` to install), then route `STEP_MARKETPLACE_INSTALL`
 
+### v0.8.8 (2026-06-17) - Toolchain + dependency refresh
+
+- [x] Toolchain pin `6.2.18` → `6.2.20`; lib re-synced, deps re-resolved
+- [x] sigil `3.7.16` → `3.8.0` (nous already latest 1.2.7); 257 tests green
+- [x] Noted mela 0.9.1 availability (marketplace layer; binary, integrated via download not a lib dep)
+
 ### Capability inventory (verified against code 2026-06-16)
 
 These were on the backlog but are implemented and tested in the tree today:
@@ -138,7 +144,8 @@ These were on the backlog but are implemented and tested in the tree today:
 - [x] **Unpack + register** (0.8.6) — materialize files honoring type, register in `PackageDb` with per-file hashes + signature (`ark_pkg_install`)
 
 ### Marketplace & community
-- [ ] Marketplace package download + SHA-256/signature verification (no HTTP/fetch path yet)
+- **mela** (the AGNOS marketplace layer — signed/integrity-checked/transparency-logged discovery + distribution) is available at **0.9.1**. It's a binary today (no lib bundle), so ark integrates via download/exec, not a code dep.
+- [ ] Marketplace package download + SHA-256/signature verification — fetch a `.ark` (via mela), then hand to the 0.8.6 installer. The missing link between resolution and `ark_pkg_install`
 - [ ] Bazaar install path (catalog browse done; wire to download + executor)
 - [ ] Mirror support
 - [ ] Package rating & reviews integration
