@@ -1,6 +1,6 @@
 # Ark
 
-**Ark** — Unified package manager for AGNOS.
+**Ark** — Unified package manager for AGNOS. (v1.0.0 — Cyrius port complete.)
 
 The vessel that carries the [zugot](https://github.com/MacCracken/zugot) (recipes) and builds the world from their definitions. Named after the ark that preserves knowledge through destruction.
 
@@ -8,7 +8,7 @@ The vessel that carries the [zugot](https://github.com/MacCracken/zugot) (recipe
 
 Ark is the user-facing CLI for all package operations on AGNOS. It translates user commands into execution plans, using [nous](https://github.com/MacCracken/nous) for dependency resolution and [takumi](https://github.com/MacCracken/takumi) recipes from [zugot](https://github.com/MacCracken/zugot) for build instructions.
 
-Ark does **not** directly execute package operations. It generates `InstallPlan` instructions — a deliberate security design choice. Execution requires appropriate privileges via [shakti](https://github.com/MacCracken/shakti).
+Ark is **plan-first**: `install`/`remove` resolve and show a plan by default and change nothing. `--dry-run` prints the concrete commands; `--apply` executes them, escalating privileged steps through [shakti](https://github.com/MacCracken/shakti) (ark itself never holds privilege). Native `.ark` packages are verified (SHA-256 root hash + Ed25519 signature + per-file hashes) before any file is written.
 
 ## Commands
 
@@ -52,7 +52,7 @@ User → ark (CLI/API)
 
 ### Key Design Decisions
 
-- **Plan-based execution**: Ark generates plans, not side effects. The plan can be inspected, approved, and audited before anything is installed.
+- **Plan-first execution**: `install`/`remove` produce an inspectable plan and run nothing without `--apply`; privileged steps go through shakti.
 - **Source-aware**: Ark knows where packages come from — system, marketplace, or app bundle. Each source has its own install/remove/upgrade path.
 - **Transactional**: Every operation is wrapped in a transaction with begin/commit/rollback. Failed installs don't leave the system in a broken state.
 - **Integrity checking**: `PackageDb` tracks installed files with SHA-256 hashes. Detects corruption, tampering, and missing files.
@@ -61,9 +61,9 @@ User → ark (CLI/API)
 
 | Source | Description | Install Method |
 |--------|-------------|----------------|
-| **System** | Base OS packages built from zugot recipes | takumi build + ark install |
-| **Marketplace** | AGNOS crates and consumer apps from [mela](https://github.com/MacCracken/mela) | Download signed .ark bundle |
-| **Bazaar** | Community-contributed packages | `ark bazaar install <package>` |
+| **System** | Base OS packages | `apt-get` via shakti today; native `.ark` store is the v2 direction (see roadmap / ADR 0002) |
+| **Marketplace** | AGNOS apps & agents from [mela](https://github.com/MacCracken/mela) | download signed `.ark` (verify root hash + trusted Ed25519 signer) → install |
+| **Bazaar** | Community-contributed packages | `ark bazaar` (catalog browse) |
 
 ## Types
 
@@ -72,7 +72,7 @@ User → ark (CLI/API)
 | Type | Description |
 |------|-------------|
 | `ArkPackageManager` | Main engine — wraps config + nous resolver |
-| `ArkCommand` | Parsed CLI command (Install, Remove, Search, List, Info, Update, Upgrade, Status) |
+| `ArkCommand` | Parsed CLI command (Install, Remove, Search, List, Info, Update, Upgrade, Status, Hold/Unhold, Pin/Unpin, Verify, History, Rollback, Backup/Restore, Bazaar) |
 | `ArkResult` | Operation result (success, message, affected packages, source) |
 | `ArkConfig` | Configuration (directories, default strategy, sources) |
 
@@ -101,27 +101,29 @@ User → ark (CLI/API)
 
 ## Dependencies
 
-| Crate | Purpose |
-|-------|---------|
-| [nous](https://github.com/MacCracken/nous) | Dependency resolution |
-| anyhow | Error handling |
-| serde / serde_json | Serialization |
-| sha2 | Integrity hashing |
-| tracing | Structured logging |
-| uuid | Transaction IDs |
-| chrono | Timestamps |
+ark is written in [Cyrius](https://github.com/MacCracken/cyrius); it consumes
+single-file `dist/*.cyr` library bundles plus the Cyrius stdlib (`bayan`,
+`sankoch`, `bench`, etc.), pinned in `cyrius.lock`.
+
+| Dependency | Purpose |
+|------------|---------|
+| [nous](https://github.com/MacCracken/nous) | Dependency resolution (system / marketplace / Flutter) |
+| [sigil](https://github.com/MacCracken/sigil) | SHA-256 + Ed25519 (integrity & signatures) |
+| [mela](https://github.com/MacCracken/mela) | Marketplace client (download) + publisher keyring |
+| sandhi (via mela) | HTTP/TLS transport for marketplace downloads |
+| agnostik (via mela) | Shared AGNOS manifest types |
+| `bayan` / `sankoch` (stdlib) | TOML/JSON + DEFLATE for `.ark` |
 
 ## Package Groups
 
 Ark supports meta-package groups for bulk installation:
 
-| Group | Installs |
-|-------|----------|
-| `agnos-desktop` | Full desktop environment |
-| `agnos-edge` | Edge/IoT minimal profile |
-| `agnos-dev` | Development tools |
-| `agnos-ai` | AI/ML stack |
-| `agnos-science` | Science crate collection |
+| `--group` | Meta-package |
+|-----------|--------------|
+| `desktop` | `agnos-desktop` |
+| `ai` / `ml` | `agnos-ai` |
+| `shell` | `agnoshi` |
+| `edge` / `iot` | `agnos-edge-agent` |
 
 ## Related
 

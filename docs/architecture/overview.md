@@ -21,9 +21,10 @@ parse_args(ac, av) --> ArkCommand (tagged struct)
     v
 ark_execute(mgr, cmd)
     |
-    +-- install/remove/upgrade --> nous stubs --> InstallPlan
+    +-- install/remove/upgrade --> nous resolver --> InstallPlan --> (executor, on --apply)
+    |   install ./pkg.ark / name@ver --marketplace --> ark_pkg_install (verify+materialize)
     |
-    +-- search/list/info/update --> nous stubs --> ArkOutput
+    +-- search/list/info/update --> nous resolver --> ArkOutput
     |
     +-- status --> ArkOutput (no resolver)
     |
@@ -46,9 +47,14 @@ ark_output_render(output, color) --> stdout
 The main engine. Holds config, resolver, package_db, transaction_log.
 All operations go through `ark_execute()`.
 
-### InstallPlan (iplan_*)
-Plan-only model: ark never calls apt-get or installs packages directly.
-Produces `InstallStep` list for shakti to execute with privileges.
+### InstallPlan + executor (iplan_* / src/exec.cyr)
+Plan-first: `install`/`remove` build an `InstallStep` list and, by default, only
+display it. `--dry-run` renders the concrete commands; `--apply` runs them — the
+executor lowers each step and wraps privileged ones as `shakti -- …` (ark never
+holds privilege itself). Native `.ark` packages (local file or marketplace
+download) install via `ark_pkg_install`: verify (root hash + signature +
+per-file hashes) → materialize → register in `PackageDb`. See
+[ADR 0001](../adr/0001-shakti-execution-backend.md).
 
 ### TransactionLog (txn_log_*)
 Append-only JSONL persistence via `file_append_locked()` for crash

@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0] - 2026-06-18 — Cyrius port complete
+
+ark's first stable release. The full package manager is in Cyrius, end to end:
+**resolve → plan → execute**, native `.ark` packages, and a trust-anchored
+marketplace path.
+
+### Highlights — what 1.0 delivers
+
+- **Plan-first execution backend** — `install`/`remove` build a typed plan;
+  `--dry-run` shows the concrete commands; `--apply` runs them, escalating
+  privileged steps through **shakti** (ark never holds privilege). ADR 0001.
+- **Native `.ark` packages** — read + verify (SHA-256 root hash + Ed25519
+  signature + per-file hashes), materialize, register in `PackageDb`. Install a
+  local file (`ark install ./pkg.ark`) or from a **mela** marketplace
+  (`name@version --marketplace <url>`), trust-anchored and fail-closed.
+- **Resolution via nous**, recipes via takumi/zugot, transactions with
+  begin/commit/rollback, integrity checking, hold/pin/verify/history/rollback/
+  backup/bazaar.
+- **Quality-gated (0.9.0):** full zugot-corpus parse (563/563), fuzz harnesses,
+  real-nous integration tests, a CVE-grounded security audit + 4 bug fixes
+  (recipe heap-overflow, zip-slip, decompression bomb, OOB reads).
+- **Security-hardened (0.9.1):** symlink two-pass materialization, marketplace
+  fail-closed signing, trust set from mela's keyring.
+- **Docs reconciled** to the shipped surface (README, architecture overview,
+  getting-started guide, worked install example).
+
+### Deferred (post-1.0, documented in the roadmap)
+
+- Marketplace enhancements: resolve-"latest", transparency-log verification,
+  mirror support, ratings, typosquatting detection; `STEP_MARKETPLACE_INSTALL`
+  wiring for resolved (no-URL) installs; progress UI.
+- **1.1.x AGNOS track:** real `--apply` on AGNOS hardware (apt+shakti), the
+  `apt-agnos` syscall-wrapper bridge, and native apt-independence (ADR 0002).
+- Tooling caveat: `cyrius coverage` is non-actionable; coverage is evidenced by
+  the test suite (292 tests + fuzz) rather than a percentage.
+
 ## [0.9.1] - 2026-06-18 — Security hardening follow-ups
 
 Closes the audit follow-ups carried out of 0.9.0.

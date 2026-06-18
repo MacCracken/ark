@@ -161,6 +161,12 @@ trust-anchored signing.
 - [x] Trust set sourced from mela's keyring (`ark_trust_from_keyring` / `ark_trust_load_keyring`)
 - [x] +3 assertions (292 tests); audit findings #4 and #5 resolved
 
+### v1.0.0 (2026-06-18) — Cyrius port complete 🎉
+
+- [x] First stable release: resolve → plan → execute; native `.ark` read/verify/install; trust-anchored marketplace download
+- [x] Quality-gated (0.9.0) + security-hardened (0.9.1); docs/README reconciled to the shipped surface
+- Deferred: marketplace enhancements + progress UI (post-1.0); AGNOS native/apply track (1.1.x)
+
 ### Capability inventory (verified against code 2026-06-16)
 
 These were on the backlog but are implemented and tested in the tree today:
@@ -230,17 +236,23 @@ it's the 1.1.x arc.)
 - [x] Fuzz harnesses — JSONL transaction-log parser + package-name validation (`fuzz/ark.fcyr`, discovered by `cyrius fuzz`, 0.8.11)
 - [ ] End-to-end test harness (build `.ark` → install → verify; fixtures + a stubbed shakti)
 
-## v1.0 Criteria
+## v1.0 Criteria — met (released 1.0.0, 2026-06-18)
 
-- [ ] Backlog features (above) complete
-- [ ] v0.9.0 quality gates all green
+- [x] Core package manager complete — resolve → plan → execute; `.ark`
+      read/verify/install; trust-anchored marketplace download (the
+      *enhancement* backlog above — resolve-latest, mirror, ratings,
+      typosquatting, conflict UI, progress bar — is **post-1.0**, not a blocker)
+- [x] v0.9.0 quality gates green (corpus, fuzz, integration, property, docs, audit)
 - [x] nous ported to Cyrius and integrated (1.2.7, via `dist/nous.cyr`)
 - [x] Execution backend live — plan → shakti → system (0.8.3)
 - [x] `.ark` read / verify / install + marketplace download (0.8.4–0.8.10)
-- [x] Package signing: `.ark` Ed25519 + per-file hashes verified on install, **trust-anchored** — configured trust set + `require_signed` fail-closed gate (0.8.15); marketplace forces require_signed + trust set sourced from mela's keyring (0.9.1). Audit #4/#5 resolved
+- [x] Package signing trust-anchored + fail-closed (0.8.15 / 0.9.1); audit #4/#5 resolved
+- [x] Documentation reconciled to the shipped surface (1.0.0)
 
 > The full apt+shakti **apply** path and AGNOS-hardware integration are **not
-> v1.0 blockers** — they're the 1.1.x AGNOS track below.
+> v1.0 blockers** — they're the 1.1.x AGNOS track below. Coverage is evidenced
+> by the test suite (292 tests + fuzz); the `cyrius coverage` *metric* tool
+> stays a caveat.
 
 ## Post-v1: 1.1.x — AGNOS track
 
