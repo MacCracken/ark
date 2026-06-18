@@ -133,6 +133,11 @@
 - [x] Recipe-parser fuzz target (`fuzz_recipe`)
 - Remaining 0.9.0 gates: e2e harness (install→verify is covered; build-via-takumi is env/CI), docs (examples + guides), formal audit, coverage metric (tooling)
 
+### v0.8.13 (2026-06-18) - v0.9.0 quality gates (chunk 3: docs)
+
+- [x] `docs/guides/getting-started.md` + `docs/examples/install-a-package.md`; README refreshed to the shipped CLI
+- Remaining 0.9.0 gates: formal security audit; coverage metric (tooling). E2e: install→verify tested + documented (build-via-takumi is CI/hardware)
+
 ### Capability inventory (verified against code 2026-06-16)
 
 These were on the backlog but are implemented and tested in the tree today:
@@ -193,7 +198,7 @@ features. (AGNOS-gated execution work is **not** here; it's the 1.1.x arc.)
 - [ ] 90%+ test coverage
 - [ ] Benchmarks stable across releases (`cyrius bench tests/ark.bcyr`)
 - [ ] Formal security audit (P(-1) internal done; formal pass pending)
-- [ ] Documentation complete — examples + guides current with the shipped CLI
+- [x] Documentation complete — examples + guides current with the shipped CLI (`docs/guides/getting-started.md`, `docs/examples/install-a-package.md`, README refreshed; 0.8.13)
 - [x] Recipe parsing validated against the full zugot corpus — **563/563 parse** (`tests/zugot_corpus.cyr`, 0.8.11)
 - [x] Integration tests against the real nous resolver — `test_nous_integration` (recipe-backed resolve_all + search + unknown-miss; 0.8.12)
 - [x] Property-based testing for the recipe parser — `fuzz_recipe` fuzz target (0.8.12)

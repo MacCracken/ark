@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.8.13] - 2026-06-18
+
+Third chunk of the **v0.9.0 quality-gate milestone** — documentation.
+
+### Added
+
+- **`docs/guides/getting-started.md`** — usage guide for the shipped CLI: the plan-first execution model (`--dry-run` / `--apply`), local `.ark` install (`--root`), marketplace install (`name@version --marketplace <url>`), remove, and the full inspect/hold/pin/rollback/backup/bazaar command set.
+- **`docs/examples/install-a-package.md`** — worked end-to-end example (takumi `.ark` → ark verify → materialize → register), covering local + marketplace install and post-install `verify`, using the test fixtures.
+
+### Changed
+
+- **README** commands section refreshed to the shipped surface (was missing `--apply`/`--dry-run`/`--root`/`--marketplace`/local-`.ark`/verify/history/pin/hold/rollback/backup/bazaar); links the new guide + example.
+
 ## [0.8.12] - 2026-06-18
 
 Second chunk of the **v0.9.0 quality-gate milestone**.

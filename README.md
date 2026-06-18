@@ -13,19 +13,33 @@ Ark does **not** directly execute package operations. It generates `InstallPlan`
 ## Commands
 
 ```bash
-ark install <package>          # Install a package
-ark install --group <group>    # Install a package group (e.g., agnos-desktop)
-ark remove <package>           # Remove a package
-ark remove --purge <package>   # Remove package and its configuration
-ark search <query>             # Search across all sources
-ark list                       # List installed packages
-ark list --source marketplace  # List packages from a specific source
-ark info <package>             # Show package details
-ark update                     # Refresh package indices
-ark upgrade                    # Upgrade all packages with available updates
-ark upgrade <package>          # Upgrade specific packages
-ark status                     # Show system package status
+# Install — plan by default; --dry-run shows concrete commands; --apply runs them
+ark install <package>              # resolve + show the plan (nothing runs)
+ark install <package> --apply      # execute (prompts to confirm)
+ark install <package> --dry-run    # show the exact commands it would run
+ark install --group <group>        # a package group (e.g., agnos-desktop)
+ark install ./pkg.ark [--root DIR] # install a local .ark (verify → materialize)
+ark install name@ver --marketplace <url>   # download from a mela marketplace, then install
+
+ark remove <package> [--purge] [--apply]    # remove (and optionally its config)
+ark search <query>                 # search across sources
+ark list [--source marketplace]    # installed packages (--system / --flutter filters)
+ark info <package>                 # package details
+ark update                         # refresh package indices
+ark upgrade [<package>]            # upgrade all / specific packages
+ark status                         # version, strategy, dirs
+ark verify [<package>]             # re-check installed files vs stored SHA-256
+ark history [count]                # recent transactions
+ark hold/unhold <pkg>              # prevent / allow upgrades
+ark pin/unpin <pkg>                # lock version/source
+ark rollback [txn-id]              # reverse a committed transaction
+ark backup / ark restore <path>    # snapshot / restore the package DB
+ark bazaar <subcmd> <query>        # browse the community catalog
 ```
+
+**Plan-first:** `install`/`remove` change nothing without `--apply`. See the
+[getting-started guide](docs/guides/getting-started.md) and a
+[worked install example](docs/examples/install-a-package.md).
 
 ## Architecture
 
