@@ -107,17 +107,17 @@
 - [x] sigil `3.7.16` → `3.8.0` (nous already latest 1.2.7); 257 tests green
 - [x] Integrated **mela 0.9.3** (+ agnostik/sandhi + net/tls/async stdlib): mela 0.9.3 namespaced its API (`mela_*`), clearing the nous/sigil symbol collisions; landed marketplace download→install (`ark install name@version --marketplace <url>`)
 
+### v0.8.9 (2026-06-18) - Toolchain 6.2.21 + mela 0.9.4
+
+- [x] Toolchain pin `6.2.20` → `6.2.21` (drift cleared); lib re-synced, deps re-resolved
+- [x] mela `0.9.3` → `0.9.4` (deferred seams closed: real download/publish/uninstall/keyring-load); collisions still 0; 263 tests green
+- [x] **Package-format direction decided (2026-06-18):** `.ark` (takumi) is the primary marketplace artifact — mela publishes both but **leans on `.ark`**, which aligns directly with ark's installer. ark fetches `.ark` via mela's `mela_fetch_artifact` (0.8.10) → `ark_pkg_install`; `.agnos-agent` (agent bundles) stays mela's own pipeline. No format bridge needed in ark.
+
 ### v0.8.10 (2026-06-18) - Marketplace download via mela's client
 
 - [x] mela `0.9.4` → `0.9.5` (adds format-agnostic `mela_fetch_artifact`)
 - [x] ark's marketplace download now drives mela's `registry_client_new` + `mela_fetch_artifact` (removed ark's own `ark_http_get_to_file`/direct sandhi). ark consumes mela's transport + guards.
 - [x] 263 tests green
-
-### v0.8.9 (2026-06-18) - Toolchain 6.2.21 + mela 0.9.4
-
-- [x] Toolchain pin `6.2.20` → `6.2.21` (drift cleared); lib re-synced, deps re-resolved
-- [x] mela `0.9.3` → `0.9.4` (deferred seams closed: real download/publish/uninstall/keyring-load); collisions still 0; 263 tests green
-- [ ] Reconcile package-format split: ark installs `.ark` (takumi); mela serves `.agnos-agent` (agents). Decide whether/how ark consumes mela's agent bundles vs. its own `.ark` marketplace download
 
 ### Capability inventory (verified against code 2026-06-16)
 
@@ -139,17 +139,13 @@ These were on the backlog but are implemented and tested in the tree today:
 
 ## Backlog
 
-### Execution backend (the critical path)
-- [x] **Step executor: plan → shakti → system** (0.8.3, bites 1–2) — `src/exec.cyr` lowers steps, wraps privileged ones as `shakti -- …`, runs via `process.cyr`, records each to the transaction log; `--apply`/`--dry-run` wired into the CLI with confirm gating (see [ADR 0001](../adr/0001-shakti-execution-backend.md))
-- [x] **Flutter (agpkg) lowering** (0.8.5) — `STEP_FLUTTER_*` → `agpkg install/remove <pkg>`, unprivileged (no shakti). Marketplace is *not* a shell lowering: takumi builds `.ark`, ark installs it natively (see "Install from `.ark`")
-- [x] **Install from `.ark`** (0.8.6, `ark_pkg_install`) — materialize verified payloads under a configurable root (dirs/regular/config/symlink) + register to `PackageDb` (version, files, per-file hashes, signature) + transaction record
-- [x] **CLI: `ark install ./pkg.ark`** (0.8.7) — local `.ark` install with `--root <dir>` staging; routed in `ark_execute` → `ark_install_local`
-- [ ] Wire install-from-`.ark` behind `STEP_MARKETPLACE_INSTALL` (blocked on the marketplace download path — no `.ark` to fetch yet)
-- [ ] **Real `--apply` on target** — exercise the full apt+shakti path on a host that has both (blocked on a Debian/AGNOS target or a stubbed-shakti e2e harness)
-- [ ] Rollback **execution** — `ark_rollback` is wired through the executor; needs a test exercising it
-- [ ] **System backend seam** ([ADR 0002](../adr/0002-package-source-model.md)) — `system_backend` mode (`apt` / `apt-agnos` / `native`); gates the `apt-agnos` bridge
-- [ ] **`apt-agnos` bridge** — route apt through the AGNOS syscall wrapper so AGNOS can use ark before the v2 native backend lands
-- [ ] Plan signing for shakti verification (sign the plan ark hands off)
+### Execution backend (shipped)
+- [x] **Step executor: plan → shakti → system** (0.8.3, bites 1–2) — `src/exec.cyr` lowers steps, wraps privileged ones as `shakti -- …`, runs via `process.cyr`, records each to the transaction log; `--apply`/`--dry-run` wired into the CLI with confirm gating ([ADR 0001](../adr/0001-shakti-execution-backend.md))
+- [x] **Flutter (agpkg) lowering** (0.8.5) — `STEP_FLUTTER_*` → `agpkg install/remove <pkg>`, unprivileged
+- [x] **Install from `.ark`** (0.8.6, `ark_pkg_install`) — materialize verified payloads under a configurable root (dirs/regular/config/symlink) + register to `PackageDb` + transaction record
+- [x] **CLI: `ark install ./pkg.ark`** (0.8.7) — local `.ark` install with `--root <dir>` staging
+
+  > Remaining execution work — real `--apply` on a target, rollback execution, the `apt-agnos` bridge, the system-backend seam, plan-signing-for-shakti — is **AGNOS-gated → the 1.1.x arc** below.
 
 ### `.ark` package format — consume takumi output
 - [x] **`.ark` v1 reader + integrity/signature verification** (0.8.4, `src/ark_package.cyr`) — header, `[[manifest]]` TOML (bayan + symmetric un-escape), file index, DEFLATE inflate (`sankoch`), SHA-256 root-hash + ed25519 verify, per-file hash re-check. Conformance-tested against real takumi fixtures incl. tamper detection.
@@ -173,78 +169,66 @@ These were on the backlog but are implemented and tested in the tree today:
 ### CLI
 - [ ] Progress bar / spinner during operations
 
-### Testing & quality
-- [ ] Integration tests with the real nous resolver
-- [ ] Property-based testing for the recipe parser
-- [ ] Fuzz harness for the JSONL transaction-log parser
-- [ ] Fuzz harness for package-name validation
-- [ ] End-to-end test harness (requires the executor)
+(Testing & quality items are the **v0.9.0** milestone below.)
 
-## Future
+## v0.9.0 — Quality gates (final hardening before v1.0)
+
+The last milestone before cutting 1.0 — prove the shipped surface, not add
+features. (AGNOS-gated execution work is **not** here; it's the 1.1.x arc.)
+
+- [ ] 90%+ test coverage
+- [ ] Benchmarks stable across releases (`cyrius bench tests/ark.bcyr`)
+- [ ] Formal security audit (P(-1) internal done; formal pass pending)
+- [ ] Documentation complete — examples + guides current with the shipped CLI
+- [ ] Recipe parsing validated against the full zugot corpus (single `curl.cyml` passes today)
+- [ ] Integration tests against the real nous resolver
+- [ ] Property-based testing for the recipe parser
+- [ ] Fuzz harnesses — JSONL transaction-log parser + package-name validation
+- [ ] End-to-end test harness (build `.ark` → install → verify; fixtures + a stubbed shakti)
+
+## v1.0 Criteria
+
+- [ ] Backlog features (above) complete
+- [ ] v0.9.0 quality gates all green
+- [x] nous ported to Cyrius and integrated (1.2.7, via `dist/nous.cyr`)
+- [x] Execution backend live — plan → shakti → system (0.8.3)
+- [x] `.ark` read / verify / install + marketplace download (0.8.4–0.8.10)
+- [x] Package signing: `.ark` Ed25519 verified on install
+
+> The full apt+shakti **apply** path and AGNOS-hardware integration are **not
+> v1.0 blockers** — they're the 1.1.x AGNOS track below.
+
+## Post-v1: 1.1.x — AGNOS track
+
+AGNOS-gated work, deferred past 1.0 (waits on AGNOS kernel + shakti maturing).
+ark is the pivot; the path is already captured in code + ADRs.
+
+### 1.1.x — live privileged execution
+- [ ] Real `--apply` on a target with apt + setuid shakti (end-to-end), incl. rollback execution
+- [ ] **`apt-agnos` bridge** ([ADR 0002](../adr/0002-package-source-model.md)) — apt fronted by the AGNOS syscall wrapper, so AGNOS can use ark before native lands
+- [ ] **System backend seam** — `system_backend` mode (`apt` / `apt-agnos` / `native`) threaded through `ArkConfig` + executor lowering + nous source selection
+- [ ] Plan signing for shakti verification
+- [ ] Integration tested on AGNOS target hardware
+
+### 1.1.x → native, apt-independent package management
+**Goal: AGNOS owns its package layer end to end — no dependency on Debian's
+apt/dpkg.** apt becomes an optional compat shim; the native path (zugot →
+takumi → native store, signed prebuilt artifacts) becomes the primary system
+source. See [ADR 0002](../adr/0002-package-source-model.md).
+
+- [ ] Native package store: promote `PackageDb` to the authoritative installed-package store (no `dpkg-query`); native artifact format on `.ark`, SHA-256 + Ed25519 verified
+- [ ] Native install/remove (unpack/link + record) — executor lowering target alongside apt
+- [ ] Native system resolver (nous): `SOURCE_NATIVE` against a native index + local store; `STRAT_SYSTEM_FIRST` native-first, apt-fallback behind a capability flag
+- [ ] Native repo/mirror protocol: signed index + content-addressed artifacts (folds in mirror support); base-system bootstrap with no apt
+- [ ] Compat & migration: apt demoted to `--source apt`; one-time dpkg-set import into the native store
+
+Cross-repo: co-designed with **nous** (native resolver), **takumi** (build
+backend), **zugot** (recipes), and **shakti** (privileged install). ark drives;
+resolution stays in nous.
+
+## Future (speculative)
 
 - Plugin system for custom sources
 - Remote management API
 - Metrics and telemetry (opt-in)
 - Offline mode with cached packages
-
-## v1.0 Criteria
-
-- [ ] All backlog items complete
-- [ ] 90%+ test coverage
-- [ ] Benchmarks stable across releases
-- [ ] Security audit passed (P(-1) done, formal audit pending)
-- [ ] Documentation complete with examples and guides
-- [ ] Recipe parsing validated against full zugot corpus (single-recipe `curl.cyml` passes today)
-- [ ] Package signing verified end-to-end (primitives in place; needs the executor to exercise the full path)
-- [ ] Integration tested on AGNOS target hardware
-- [x] nous ported to Cyrius and integrated (nous 1.2.6, consumed via `dist/nous.cyr`)
-- [ ] Execution backend live (plan → shakti → system)
-
-## v2.0 — Native, apt-independent package management
-
-**Goal: AGNOS owns its package layer end to end — ark installs, removes, and
-resolves without depending on Debian's apt/dpkg toolchain being present.**
-
-Today the `SOURCE_SYSTEM` path is apt: nous's `sysdb` shells out to
-`apt-cache`/`dpkg-query` for resolution and the executor lowers system steps
-to `apt-get`. That ties ark to a Debian base and to apt's availability,
-correctness, and repos. v2 makes apt **optional** — a compatibility shim, not
-the foundation. The native path (zugot recipes → takumi builds → a native
-package store, fetched as signed prebuilt artifacts) becomes the primary
-system source.
-
-### Native package store (replaces dpkg as source of truth)
-- [ ] Promote ark's `PackageDb` to the authoritative installed-package store
-      (files, owners, versions, checksums) — no `dpkg-query` dependency
-- [ ] Native package artifact format (build on the existing `.ark` packaging),
-      with SHA-256 + signature verified on install (sigil Ed25519, already in tree)
-- [ ] Native install/remove that unpacks/links into the system and records to
-      the store + transaction log — executor lowering target alongside apt
-
-### Native system resolver (nous-side)
-- [ ] New `SOURCE_NATIVE` backend in nous: resolve against a native repo index
-      + the local store, independent of `apt-cache`
-- [ ] Strategy update: `STRAT_SYSTEM_FIRST` resolves native-first, apt-fallback
-      only when the apt compat shim is enabled
-- [ ] Keep `sysdb`/apt behind a capability flag for Debian-base interop during
-      the transition
-
-### Native binary repository + distribution
-- [ ] Native repo/mirror protocol: signed index + content-addressed artifacts
-      (folds in the v1 "marketplace download + verification" + "mirror" items)
-- [ ] takumi as the primary build backend for source recipes; prebuilt native
-      artifacts as the fast path
-- [ ] Base-system bootstrap provided natively (so a fresh AGNOS install needs
-      no apt at all)
-
-### Compatibility & migration
-- [ ] apt support demoted to an optional `--source apt` / compat strategy;
-      ark fully functional with it absent
-- [ ] One-time import of an existing dpkg-installed set into the native store
-      (migration aid for Debian-based hosts)
-- [x] ADR for the native-vs-apt source model and the cutover plan ([ADR 0002](../adr/0002-package-source-model.md))
-- [ ] Interim: `apt-agnos` backend mode — apt fronted by the AGNOS syscall wrapper, so AGNOS can use ark before native lands (see ADR 0002)
-
-Cross-repo: this is co-designed with **nous** (native resolver backend),
-**takumi** (build backend), **zugot** (recipe corpus), and **shakti**
-(privileged native install). ark drives; resolution stays in nous.
