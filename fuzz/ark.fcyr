@@ -1,12 +1,13 @@
 # ark fuzz harnesses
 # Targets: JSONL transaction log parsing, package name validation,
-# CLI argument parsing, JSON escape
+# CLI argument parsing, JSON escape, recipe (.cyml) parsing
 
 include "src/types.cyr"
 include "src/output.cyr"
 include "src/transaction.cyr"
 include "src/db.cyr"
 include "src/engine.cyr"
+include "src/recipe.cyr"
 include "src/cli.cyr"
 
 # =========================================================================
@@ -79,6 +80,23 @@ fn fuzz_source_parse(data, len) {
 }
 
 # =========================================================================
+# Fuzz target: recipe (.cyml) parsing — arbitrary bytes must never crash
+# the parser (it returns Err on malformed input).
+# =========================================================================
+
+fn fuzz_recipe(data, len) {
+    var rr = recipe_parse(data, len);
+    if (is_ok(rr) == 1) {
+        var r = result_unwrap(rr);
+        # touch a few fields + validate to exercise the post-parse paths
+        recipe_name(r);
+        recipe_version(r);
+        recipe_validate(r);
+    }
+    return 0;
+}
+
+# =========================================================================
 # Runner: exercise all targets with seed inputs
 # =========================================================================
 
@@ -109,6 +127,14 @@ fn fuzz_main() {
     fuzz_source_parse("system", 6);
     fuzz_source_parse("SYSTEM", 6);
     fuzz_source_parse("\xff\x00", 2);
+
+    # Recipe (.cyml) parse seeds
+    fuzz_recipe("[package]\nname = \"x\"\nversion = \"1.0\"\n", 36);
+    fuzz_recipe("[package", 8);
+    fuzz_recipe("name = \"\\", 9);
+    fuzz_recipe("\xff\xff\x00\xff", 4);
+    fuzz_recipe("", 0);
+    fuzz_recipe("[[[[", 4);
 
     println("fuzz: all seeds ok");
     return 0;

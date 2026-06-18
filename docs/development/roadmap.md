@@ -127,6 +127,12 @@
 - [x] mela 0.9.5 → 1.0.0 (API-compatible)
 - Remaining 0.9.0 gates: coverage metric, formal audit, docs, nous integration tests, property-based parser tests, e2e harness
 
+### v0.8.12 (2026-06-18) - v0.9.0 quality gates (chunk 2)
+
+- [x] Integration tests vs the real nous resolver (`test_nous_integration`, zugot-backed)
+- [x] Recipe-parser fuzz target (`fuzz_recipe`)
+- Remaining 0.9.0 gates: e2e harness (install→verify is covered; build-via-takumi is env/CI), docs (examples + guides), formal audit, coverage metric (tooling)
+
 ### Capability inventory (verified against code 2026-06-16)
 
 These were on the backlog but are implemented and tested in the tree today:
@@ -189,8 +195,8 @@ features. (AGNOS-gated execution work is **not** here; it's the 1.1.x arc.)
 - [ ] Formal security audit (P(-1) internal done; formal pass pending)
 - [ ] Documentation complete — examples + guides current with the shipped CLI
 - [x] Recipe parsing validated against the full zugot corpus — **563/563 parse** (`tests/zugot_corpus.cyr`, 0.8.11)
-- [ ] Integration tests against the real nous resolver
-- [ ] Property-based testing for the recipe parser
+- [x] Integration tests against the real nous resolver — `test_nous_integration` (recipe-backed resolve_all + search + unknown-miss; 0.8.12)
+- [x] Property-based testing for the recipe parser — `fuzz_recipe` fuzz target (0.8.12)
 - [x] Fuzz harnesses — JSONL transaction-log parser + package-name validation (`fuzz/ark.fcyr`, discovered by `cyrius fuzz`, 0.8.11)
 - [ ] End-to-end test harness (build `.ark` → install → verify; fixtures + a stubbed shakti)
 

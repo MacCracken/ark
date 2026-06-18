@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.8.12] - 2026-06-18
+
+Second chunk of the **v0.9.0 quality-gate milestone**.
+
+### Added
+
+- **Integration tests against the real nous resolver** (`test_nous_integration`, `tests/ark.tcyr`) — loads the zugot recipe corpus, builds a resolver, and exercises recipe-backed `resolver_resolve_all_with_recipes` (curl + transitive deps), `resolver_search`, and the unknown-package clean-miss path (the nous 1.2.7 SIGSEGV regression). Gated on the corpus being present. +9 assertions (272 total).
+- **Recipe-parser fuzz target** (`fuzz_recipe` in `fuzz/ark.fcyr`) — feeds malformed/truncated/binary input to `recipe_parse`; the parser must return `Err`, never crash. Covers the "property-based testing for the recipe parser" gate (fuzzing form). `cyrius fuzz`: all seeds ok.
+
 ## [0.8.11] - 2026-06-18
 
 First chunk of the **v0.9.0 quality-gate milestone**.

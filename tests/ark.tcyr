@@ -895,6 +895,50 @@ fn test_marketplace() {
     assert_eq(ares_success(noat), 0, "missing @version rejected");
 }
 
+fn test_nous_integration() {
+    test_group("nous_integration");
+    # Integration against the REAL nous resolver, using the zugot recipe corpus
+    # as real data. Gated on the corpus being present (mirrors test_recipes).
+    if (file_exists("../zugot/base/curl.cyml") == 0) { return 0; }
+
+    sys_mkdir("/tmp/ark-int-mkt", 493);
+    var rr = resolver_new(str_from("/tmp/ark-int-mkt"), str_from("/tmp/ark-int-cache"));
+    assert(is_ok(rr) == 1, "resolver_new ok");
+    var r = payload(rr);
+    var rdb = recipe_db_load(str_from("../zugot"));
+    assert(rdb != 0, "zugot recipe DB loaded");
+    resolver_with_recipes(r, rdb);
+
+    # Transitive resolve through the recipe-aware path (resolver_resolve alone
+    # has no recipe fallback — only resolve_all_with_recipes does).
+    var names = vec_new();
+    vec_push(names, str_from("curl"));
+    var ra = resolver_resolve_all_with_recipes(r, names);
+    assert(is_err_result(ra) == 0, "resolve_all(curl) returns ok");
+    var pkgs = pl_packages(payload(ra));
+    assert(vec_len(pkgs) >= 1, "plan resolved >= 1 package");
+    var found = 0;
+    var i = 0;
+    while (i < vec_len(pkgs)) {
+        var pk = vec_get(pkgs, i);
+        if (str_eq(rp_name(pk), str_from("curl")) == 1) {
+            found = 1;
+            assert(str_len(rp_ver(pk)) > 0, "curl resolved with a version");
+        }
+        i = i + 1;
+    }
+    assert(found == 1, "curl present in the resolved plan (via recipe DB)");
+
+    # Search returns cleanly (no apt + empty marketplace here — just no crash).
+    var sr = resolver_search(r, str_from("curl"));
+    assert(is_err_result(sr) == 0, "search returns a clean Result");
+
+    # Unknown package: clean miss, no crash (the 1.2.7 SIGSEGV regression).
+    var bog = resolver_resolve(r, str_from("zzznonexistentpkg"));
+    assert(is_err_result(bog) == 0, "unknown pkg resolves without error");
+    assert_eq(payload(bog), 0, "unknown pkg -> none");
+}
+
 # =========================================================================
 # Main test runner
 # =========================================================================
@@ -916,6 +960,7 @@ fn test_main() {
     test_ark_install();
     test_ark_install_cli();
     test_marketplace();
+    test_nous_integration();
     return assert_summary();
 }
 
