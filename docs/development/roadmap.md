@@ -119,6 +119,14 @@
 - [x] ark's marketplace download now drives mela's `registry_client_new` + `mela_fetch_artifact` (removed ark's own `ark_http_get_to_file`/direct sandhi). ark consumes mela's transport + guards.
 - [x] 263 tests green
 
+### v0.8.11 (2026-06-18) - v0.9.0 quality gates (chunk 1)
+
+- [x] Fixed `recipe_parse_file` heap overflow (64 KiB buffer vs 512 KiB read cap)
+- [x] Zugot corpus validation: 563/563 recipes parse (`tests/zugot_corpus.cyr`)
+- [x] Fuzz harness discoverable + passing (`fuzz/ark.fcyr` via `cyrius fuzz`)
+- [x] mela 0.9.5 → 1.0.0 (API-compatible)
+- Remaining 0.9.0 gates: coverage metric, formal audit, docs, nous integration tests, property-based parser tests, e2e harness
+
 ### Capability inventory (verified against code 2026-06-16)
 
 These were on the backlog but are implemented and tested in the tree today:
@@ -180,10 +188,10 @@ features. (AGNOS-gated execution work is **not** here; it's the 1.1.x arc.)
 - [ ] Benchmarks stable across releases (`cyrius bench tests/ark.bcyr`)
 - [ ] Formal security audit (P(-1) internal done; formal pass pending)
 - [ ] Documentation complete — examples + guides current with the shipped CLI
-- [ ] Recipe parsing validated against the full zugot corpus (single `curl.cyml` passes today)
+- [x] Recipe parsing validated against the full zugot corpus — **563/563 parse** (`tests/zugot_corpus.cyr`, 0.8.11)
 - [ ] Integration tests against the real nous resolver
 - [ ] Property-based testing for the recipe parser
-- [ ] Fuzz harnesses — JSONL transaction-log parser + package-name validation
+- [x] Fuzz harnesses — JSONL transaction-log parser + package-name validation (`fuzz/ark.fcyr`, discovered by `cyrius fuzz`, 0.8.11)
 - [ ] End-to-end test harness (build `.ark` → install → verify; fixtures + a stubbed shakti)
 
 ## v1.0 Criteria

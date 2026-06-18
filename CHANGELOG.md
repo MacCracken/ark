@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.8.11] - 2026-06-18
+
+First chunk of the **v0.9.0 quality-gate milestone**.
+
+### Fixed
+
+- **Heap overflow in `recipe_parse_file`** (`src/recipe.cyr`) — it `alloc`'d a 64 KiB buffer but read with a 512 KiB cap, corrupting the heap for any recipe > 64 KiB. Buffer now matches the read cap.
+
+### Added
+
+- **Zugot corpus validation harness** (`tests/zugot_corpus.cyr`) — parses every recipe in the zugot corpus with ark's own parser. **563/563 parse, 0 failures** (44 carry expected validation warnings — meta/marketplace packages with no source tarball). Satisfies the v1.0 criterion "recipe parsing validated against the full zugot corpus." (Reads a generated path list; see the file header.)
+- **Fuzz harness now discoverable** — moved `tests/ark.fcyr` → `fuzz/ark.fcyr` so `cyrius fuzz` finds and runs it (txn-log JSONL, package-name, CLI args, JSON escape). `cyrius fuzz`: all seeds ok, PASS.
+
+### Changed
+
+- **mela 0.9.5 → 1.0.0** — API-compatible bump (mela froze its public API at 1.0.0; `mela_fetch_artifact` unchanged). 263 tests green.
+
 ## [0.8.10] - 2026-06-18
 
 ### Changed

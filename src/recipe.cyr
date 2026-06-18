@@ -97,8 +97,11 @@ fn parse_toml_array(val) {
 # =========================================================================
 
 fn recipe_parse_file(path) {
-    var buf = alloc(65536);
-    var bytes = file_read_all(str_data(path), buf, 524288);
+    # Buffer must match the read cap — alloc(65536) with a 524288 read cap
+    # was a heap overflow for any recipe > 64 KiB.
+    var cap = 524288;
+    var buf = alloc(cap);
+    var bytes = file_read_all(str_data(path), buf, cap);
     if (bytes <= 0) { return Err(1); }
     return recipe_parse(buf, bytes);
 }
@@ -244,35 +247,35 @@ fn recipe_to_output(r) {
 
     if (recipe_version(r) > 0) {
         ark_output_add(output, output_line_info(
-            str_from("Version"), recipe_version(r)));
+        str_from("Version"), recipe_version(r)));
     }
     if (recipe_desc(r) > 0) {
         ark_output_add(output, output_line_info(
-            str_from("Description"), recipe_desc(r)));
+        str_from("Description"), recipe_desc(r)));
     }
     if (recipe_license(r) > 0) {
         ark_output_add(output, output_line_info(
-            str_from("License"), recipe_license(r)));
+        str_from("License"), recipe_license(r)));
     }
     if (recipe_arch(r) > 0) {
         ark_output_add(output, output_line_info(
-            str_from("Arch"), recipe_arch(r)));
+        str_from("Arch"), recipe_arch(r)));
     }
     if (recipe_source_url(r) > 0) {
         ark_output_add(output, output_line_info(
-            str_from("Source"), recipe_source_url(r)));
+        str_from("Source"), recipe_source_url(r)));
     }
     # Runtime deps
     var rdeps = recipe_deps_runtime(r);
     if (vec_len(rdeps) > 0) {
         ark_output_add(output, output_line_info(
-            str_from("Runtime deps"), str_join(rdeps, str_from(", "))));
+        str_from("Runtime deps"), str_join(rdeps, str_from(", "))));
     }
     # Build deps
     var bdeps = recipe_deps_build(r);
     if (vec_len(bdeps) > 0) {
         ark_output_add(output, output_line_info(
-            str_from("Build deps"), str_join(bdeps, str_from(", "))));
+        str_from("Build deps"), str_join(bdeps, str_from(", "))));
     }
     return output;
 }
