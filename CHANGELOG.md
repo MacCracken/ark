@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.8.10] - 2026-06-18
+
+### Changed
+
+- **Marketplace download now goes through mela's client** (`src/marketplace.cyr`). mela 0.9.5 added a format-agnostic `mela_fetch_artifact(client, name, version, dest)` (writes the artifact verbatim to a caller-chosen path, no `.agnos-agent` assumption). ark now builds a mela `registry_client_new` and calls it to fetch the `.ark` into its cache, replacing ark's hand-rolled `ark_http_get_to_file` (removed) and its direct `sandhi_http_*` calls. ark now consumes mela's transport + download guards instead of duplicating them.
+- **mela 0.9.4 → 0.9.5** (the dep providing the new fetch primitive).
+- 263 tests still green; build/lint/fmt clean. Cache-hit install path unchanged.
+
 ## [0.8.9] - 2026-06-18
 
 ### Changed

@@ -1,6 +1,6 @@
 [package]
 name = "ark"
-version = "0.8.9"
+version = "0.8.10"
 description = "ark - Cyrius port"
 license = "GPL-3.0-only"
 language = "cyrius"
@@ -33,7 +33,7 @@ modules = ["dist/nous.cyr"]
 [deps.mela]
 git = "https://github.com/MacCracken/mela.git"
 path = "../mela"
-tag = "0.9.4"
+tag = "0.9.5"
 modules = ["dist/mela.cyr"]
 
 [deps.agnostik]

@@ -22,29 +22,12 @@ fn ark_marketplace_cache_path(cache_dir, name, version) {
     return path_join(cache_dir, fname);
 }
 
-# HTTP GET `url` and write the 2xx body to `out_path` (cstr). Returns bytes
-# written, or 0 on empty URL / transport error / non-2xx / empty body.
-# Transport is sandhi (URL parse + DNS + TLS for https + framing) — the
-# same client mela uses (mirrors mela's _rc_http_get).
-fn ark_http_get_to_file(url, out_path_cstr) {
-    if (str_len(url) == 0) { return 0; }
-    var curl = str_clone(url);
-    var opts = sandhi_http_options_new();
-    var r = sandhi_http_get_auto(str_data(curl), 0, opts);
-    if (r == 0) { return 0; }
-    var status = sandhi_http_status(r);
-    if (status < 200) { return 0; }
-    if (status >= 300) { return 0; }
-    var blen = sandhi_http_body_len(r);
-    if (blen <= 0) { return 0; }
-    file_write_all(out_path_cstr, sandhi_http_body(r), blen);
-    return blen;
-}
-
 # Download a marketplace package's `.ark` from `base_url` (skipping the fetch
-# on a cache hit), then install it via the native installer. mela validates
-# the segments + builds the URL; sandhi transports; ark_pkg_install verifies,
-# lays down, and registers. `install_root` "" = real root.
+# on a cache hit), then install it via the native installer. ark drives mela's
+# registry client — `mela_fetch_artifact` (mela 0.9.5) applies the download
+# guards + sandhi HTTP/TLS transport and writes the artifact verbatim to ark's
+# chosen `.ark` cache path (format-agnostic, not mela's `.agnos-agent` layout);
+# then ark_pkg_install verifies, lays down, and registers. `install_root` "" = real root.
 fn ark_marketplace_install(mgr, base_url, cache_dir, name, version, install_root, max_len) {
     if (validate_path_segment(name) == 0) {
         return ark_result_new(0, str_from("ark: invalid marketplace package name"),
@@ -58,8 +41,8 @@ fn ark_marketplace_install(mgr, base_url, cache_dir, name, version, install_root
     var cpath = str_data(cache_path);
     if (file_exists(cpath) == 0) {
         apkg_mkdir_p(str_data(cache_dir));
-        var url = build_download_url(base_url, name, version);
-        var n = ark_http_get_to_file(url, cpath);
+        var client = registry_client_new(base_url, cache_dir);
+        var n = mela_fetch_artifact(client, name, version, cache_path);
         if (n <= 0) {
             return ark_result_new(0,
             str_from("ark: marketplace download failed (offline or server unavailable)"),

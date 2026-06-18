@@ -107,6 +107,12 @@
 - [x] sigil `3.7.16` → `3.8.0` (nous already latest 1.2.7); 257 tests green
 - [x] Integrated **mela 0.9.3** (+ agnostik/sandhi + net/tls/async stdlib): mela 0.9.3 namespaced its API (`mela_*`), clearing the nous/sigil symbol collisions; landed marketplace download→install (`ark install name@version --marketplace <url>`)
 
+### v0.8.10 (2026-06-18) - Marketplace download via mela's client
+
+- [x] mela `0.9.4` → `0.9.5` (adds format-agnostic `mela_fetch_artifact`)
+- [x] ark's marketplace download now drives mela's `registry_client_new` + `mela_fetch_artifact` (removed ark's own `ark_http_get_to_file`/direct sandhi). ark consumes mela's transport + guards.
+- [x] 263 tests green
+
 ### v0.8.9 (2026-06-18) - Toolchain 6.2.21 + mela 0.9.4
 
 - [x] Toolchain pin `6.2.20` → `6.2.21` (drift cleared); lib re-synced, deps re-resolved
