@@ -185,39 +185,33 @@ These were on the backlog but are implemented and tested in the tree today:
 - [x] Privilege-aware config loading — skips user-writable configs when `euid == 0` (`src/cli.cyr`)
 - [x] Bazaar local catalog browse — `bazaar_db_load` / search / list-by-category (`src/bazaar.cyr`); download/verify still open
 
-## Backlog
+## Post-1.0: 1.0.x — marketplace & UX enhancements
 
-### Execution backend (shipped)
-- [x] **Step executor: plan → shakti → system** (0.8.3, bites 1–2) — `src/exec.cyr` lowers steps, wraps privileged ones as `shakti -- …`, runs via `process.cyr`, records each to the transaction log; `--apply`/`--dry-run` wired into the CLI with confirm gating ([ADR 0001](../adr/0001-shakti-execution-backend.md))
-- [x] **Flutter (agpkg) lowering** (0.8.5) — `STEP_FLUTTER_*` → `agpkg install/remove <pkg>`, unprivileged
-- [x] **Install from `.ark`** (0.8.6, `ark_pkg_install`) — materialize verified payloads under a configurable root (dirs/regular/config/symlink) + register to `PackageDb` + transaction record
-- [x] **CLI: `ark install ./pkg.ark`** (0.8.7) — local `.ark` install with `--root <dir>` staging
+Non-blocking enhancements layered on the shipped 1.0 core (resolve → plan →
+execute, `.ark` read/verify/install, trust-anchored marketplace download — see
+Completed). Sequenced as a 1.0.x arc; group sizes are a guide, not a contract.
 
-  > Remaining execution work — real `--apply` on a target, rollback execution, the `apt-agnos` bridge, the system-backend seam, plan-signing-for-shakti — is **AGNOS-gated → the 1.1.x arc** below.
-
-### `.ark` package format — consume takumi output
-- [x] **`.ark` v1 reader + integrity/signature verification** (0.8.4, `src/ark_package.cyr`) — header, `[[manifest]]` TOML (bayan + symmetric un-escape), file index, DEFLATE inflate (`sankoch`), SHA-256 root-hash + ed25519 verify, per-file hash re-check. Conformance-tested against real takumi fixtures incl. tamper detection.
-- [x] **Unpack + register** (0.8.6) — materialize files honoring type, register in `PackageDb` with per-file hashes + signature (`ark_pkg_install`)
-
-### Marketplace & community
-- **mela** is consumed at **0.9.3** (`dist/mela.cyr`) — 0.9.3 namespaced its public API (`mela_*`), clearing the `registry_new`/`manifest_new`/`keyring_new` collisions with nous/sigil. Pulls the sandhi TLS/HTTP/async/ws stack (transitive).
-- [x] **Marketplace download → install** (0.8.8, `src/marketplace.cyr`) — `ark install name@version --marketplace <url>`: mela validates + builds the URL, sandhi transports, the 0.8.6 installer verifies + materializes + registers. Cache-hit skips the network.
+### 1.0.1 — marketplace resolution UX
 - [ ] Resolve "latest" (no explicit version) via mela's manifest/latest endpoints
-- [ ] Verify the artifact against mela's keyring + transparency log (beyond the `.ark`'s own embedded signature)
-- [ ] Wire `STEP_MARKETPLACE_INSTALL` (resolved marketplace packages) to the marketplace installer, so `ark install <name>` (no URL) uses a configured marketplace
-- [ ] Bazaar install path (catalog browse done; wire to download + executor)
-- [ ] Mirror support
+- [ ] Wire `STEP_MARKETPLACE_INSTALL` (resolved packages) to the marketplace installer, so `ark install <name>` (no `--marketplace` URL) uses a configured marketplace
+
+### 1.0.2 — supply-chain trust depth
+- [ ] Verify the artifact against mela's **transparency log** (beyond the trusted-signer check)
+- [ ] Typosquatting detection (Levenshtein distance) on resolution
+
+### 1.0.3 — distribution breadth
+- [ ] Mirror support (fall over between configured marketplace mirrors)
+- [ ] Bazaar install path (catalog browse done; wire to download + the installer)
+
+### 1.0.x — UX & resolution polish
+- [ ] Progress bar / spinner during downloads + apply
 - [ ] Package rating & reviews integration
-- [ ] Typosquatting detection (Levenshtein distance)
+- [ ] Dependency conflict-resolution UI
+- [ ] Namespace scoping for dependency-confusion defense (mostly nous-side)
 
-### Resolution (mostly nous-side)
-- [ ] Dependency conflict resolution UI
-- [ ] Namespace scoping for dependency-confusion defense (nous)
-
-### CLI
-- [ ] Progress bar / spinner during operations
-
-(Testing & quality items are the **v0.9.0** milestone below.)
+> AGNOS-gated execution work (real `--apply` on hardware, the `apt-agnos`
+> bridge, the system-backend seam, plan-signing-for-shakti) is **not** in the
+> 1.0.x arc — it's the 1.1.x AGNOS track below.
 
 ## v0.9.0 — Quality gates (released 2026-06-18)
 
