@@ -9,6 +9,7 @@ include "src/engine.cyr"
 include "src/exec.cyr"
 include "src/recipe.cyr"
 include "src/ark_package.cyr"
+include "src/marketplace.cyr"
 include "src/bazaar.cyr"
 include "src/cli.cyr"
 
@@ -850,6 +851,50 @@ fn test_ark_install_cli() {
     assert(pkg_db_is_installed(amgr_db(mgr), str_from("myapp")), "cli install registered in db");
 }
 
+fn test_marketplace() {
+    test_group("marketplace");
+
+    # cache-path uses mela's sanitize_filename: <cache>/<name>-<version>.ark
+    var cp = ark_marketplace_cache_path(str_from("/tmp/ark-mkt-cache"),
+                                        str_from("myapp"), str_from("2.1.0"));
+    assert(str_contains(cp, str_from("myapp-2_1_0.ark")), "cache path built (sanitized)");
+
+    var cfg = ark_config_default();
+    store64(cfg + 40, str_from("/tmp/ark-mkt-mkt"));
+    store64(cfg + 48, str_from("/tmp/ark-mkt-cache"));
+    store64(cfg + 56, str_from("/tmp/ark-mkt-db.json"));
+    store64(cfg + 64, str_from("/tmp/ark-mkt-txn.log"));
+    var mgr = ark_mgr_new(cfg);
+
+    # Cache hit: pre-stage the fixture at the computed cache path so install
+    # runs fully offline (no network) through the mela download path.
+    apkg_mkdir_p(str_data(str_from("/tmp/ark-mkt-cache")));
+    var dst = str_data(ark_marketplace_cache_path(str_from("/tmp/ark-mkt-cache"),
+                                                  str_from("myapp"), str_from("2.1.0")));
+    var fb = alloc(4096);
+    var fn2 = file_read_all("tests/fixtures/sample-signed.ark", fb, 4096);
+    file_write_all(dst, fb, fn2);
+    var res = ark_marketplace_install(mgr, str_from("https://example.invalid/"),
+                                      str_from("/tmp/ark-mkt-cache"),
+                                      str_from("myapp"), str_from("2.1.0"),
+                                      str_from("/tmp/ark-mkt-root"), 1048576);
+    assert_eq(ares_success(res), 1, "cache-hit marketplace install succeeds");
+    assert(file_exists("/tmp/ark-mkt-root/usr/bin/app"), "marketplace install materialized file");
+    assert(pkg_db_is_installed(amgr_db(mgr), str_from("myapp")), "registered in db");
+
+    # Invalid version segment is rejected by mela's validator.
+    var bad = ark_marketplace_install(mgr, str_from("https://example.invalid/"),
+                                      str_from("/tmp/ark-mkt-cache"),
+                                      str_from("myapp"), str_from("../etc/passwd"),
+                                      str_from("/tmp/ark-mkt-root"), 1048576);
+    assert_eq(ares_success(bad), 0, "invalid version rejected");
+
+    # name@version arg parsing requires the '@'.
+    var noat = ark_marketplace_install_arg(mgr, str_from("https://example.invalid/"),
+                                           str_from("myapp"), str_from(""));
+    assert_eq(ares_success(noat), 0, "missing @version rejected");
+}
+
 # =========================================================================
 # Main test runner
 # =========================================================================
@@ -870,6 +915,7 @@ fn test_main() {
     test_ark_package();
     test_ark_install();
     test_ark_install_cli();
+    test_marketplace();
     return assert_summary();
 }
 

@@ -18,6 +18,7 @@ include "src/engine.cyr"
 include "src/exec.cyr"
 include "src/recipe.cyr"
 include "src/ark_package.cyr"
+include "src/marketplace.cyr"
 include "src/bazaar.cyr"
 include "src/cli.cyr"
 

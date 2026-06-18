@@ -140,6 +140,13 @@ fn ark_execute(mgr, cmd) {
     var tag = acmd_tag(cmd);
     if (tag == CMD_INSTALL) {
         var ipkgs = acmd_packages(cmd);
+        # `--marketplace URL` + name@version: download from mela, then install.
+        if (str_len(acmd_mkt_url(cmd)) > 0) {
+            if (vec_len(ipkgs) == 1) {
+                return ark_marketplace_install_arg(mgr, acmd_mkt_url(cmd),
+                vec_get(ipkgs, 0), acmd_root(cmd));
+            }
+        }
         # A single `.ark` path argument is a direct local install.
         if (vec_len(ipkgs) == 1) {
             if (apkg_is_ark_path(vec_get(ipkgs, 0)) == 1) {

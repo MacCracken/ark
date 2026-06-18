@@ -105,7 +105,13 @@
 
 - [x] Toolchain pin `6.2.18` → `6.2.20`; lib re-synced, deps re-resolved
 - [x] sigil `3.7.16` → `3.8.0` (nous already latest 1.2.7); 257 tests green
-- [x] Noted mela 0.9.1 availability (marketplace layer; binary, integrated via download not a lib dep)
+- [x] Integrated **mela 0.9.3** (+ agnostik/sandhi + net/tls/async stdlib): mela 0.9.3 namespaced its API (`mela_*`), clearing the nous/sigil symbol collisions; landed marketplace download→install (`ark install name@version --marketplace <url>`)
+
+### v0.8.9 (2026-06-18) - Toolchain 6.2.21 + mela 0.9.4
+
+- [x] Toolchain pin `6.2.20` → `6.2.21` (drift cleared); lib re-synced, deps re-resolved
+- [x] mela `0.9.3` → `0.9.4` (deferred seams closed: real download/publish/uninstall/keyring-load); collisions still 0; 263 tests green
+- [ ] Reconcile package-format split: ark installs `.ark` (takumi); mela serves `.agnos-agent` (agents). Decide whether/how ark consumes mela's agent bundles vs. its own `.ark` marketplace download
 
 ### Capability inventory (verified against code 2026-06-16)
 
@@ -144,8 +150,11 @@ These were on the backlog but are implemented and tested in the tree today:
 - [x] **Unpack + register** (0.8.6) — materialize files honoring type, register in `PackageDb` with per-file hashes + signature (`ark_pkg_install`)
 
 ### Marketplace & community
-- **mela** (the AGNOS marketplace layer — signed/integrity-checked/transparency-logged discovery + distribution) is available at **0.9.1**. It's a binary today (no lib bundle), so ark integrates via download/exec, not a code dep.
-- [ ] Marketplace package download + SHA-256/signature verification — fetch a `.ark` (via mela), then hand to the 0.8.6 installer. The missing link between resolution and `ark_pkg_install`
+- **mela** is consumed at **0.9.3** (`dist/mela.cyr`) — 0.9.3 namespaced its public API (`mela_*`), clearing the `registry_new`/`manifest_new`/`keyring_new` collisions with nous/sigil. Pulls the sandhi TLS/HTTP/async/ws stack (transitive).
+- [x] **Marketplace download → install** (0.8.8, `src/marketplace.cyr`) — `ark install name@version --marketplace <url>`: mela validates + builds the URL, sandhi transports, the 0.8.6 installer verifies + materializes + registers. Cache-hit skips the network.
+- [ ] Resolve "latest" (no explicit version) via mela's manifest/latest endpoints
+- [ ] Verify the artifact against mela's keyring + transparency log (beyond the `.ark`'s own embedded signature)
+- [ ] Wire `STEP_MARKETPLACE_INSTALL` (resolved marketplace packages) to the marketplace installer, so `ark install <name>` (no URL) uses a configured marketplace
 - [ ] Bazaar install path (catalog browse done; wire to download + executor)
 - [ ] Mirror support
 - [ ] Package rating & reviews integration

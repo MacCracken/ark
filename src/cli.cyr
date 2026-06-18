@@ -31,6 +31,10 @@ fn parse_args(ac, av) {
                 i = i + 1;
                 if (i >= ac) { println("--root requires a directory"); return 0; }
                 acmd_set_root(c, str_from(argv(i)));
+            } elif (streq(arg, "--marketplace")) {
+                i = i + 1;
+                if (i >= ac) { println("--marketplace requires a base URL"); return 0; }
+                acmd_set_mkt_url(c, str_from(argv(i)));
             } elif (load8(arg) != 45) { vec_push(acmd_packages(c), str_from(arg)); }
             else { println("Unknown flag for install"); return 0; }
             i = i + 1;

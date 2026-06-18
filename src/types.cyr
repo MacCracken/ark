@@ -16,7 +16,7 @@
 # Constants
 # =========================================================================
 
-var ARK_VERSION_STR = "0.8.8";
+var ARK_VERSION_STR = "0.8.9";
 
 var DEFAULT_TRANSACTION_LOG_PATH = "/var/lib/agnos/ark/transaction.log";
 var DEFAULT_PACKAGE_DB_PATH = "/var/lib/agnos/ark/packages.json";
@@ -90,7 +90,7 @@ enum ArkCommandTag {
     CMD_BAZAAR = 18;
 }
 
-var ACMD_SZ = 80;
+var ACMD_SZ = 88;
 
 fn acmd_tag(p) { return load64(p); }
 fn acmd_set_tag(p, v) { store64(p, v); }
@@ -113,6 +113,9 @@ fn acmd_set_count(p, v) { store64(p + 64, v); }
 # Install root for local `.ark` install (`--root DIR`); "" = real root.
 fn acmd_root(p) { return load64(p + 72); }
 fn acmd_set_root(p, v) { store64(p + 72, v); }
+# Marketplace base URL (`--marketplace URL`) for `ark install name@version`; "" = none.
+fn acmd_mkt_url(p) { return load64(p + 80); }
+fn acmd_set_mkt_url(p, v) { store64(p + 80, v); }
 
 fn ark_cmd_new(tag) {
     var p = alloc(ACMD_SZ);
@@ -126,6 +129,7 @@ fn ark_cmd_new(tag) {
     acmd_set_purge(p, 0);
     acmd_set_count(p, 0 - 1);
     acmd_set_root(p, str_from(""));
+    acmd_set_mkt_url(p, str_from(""));
     return p;
 }
 # =========================================================================
