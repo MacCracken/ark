@@ -16,11 +16,12 @@
 # Constants
 # =========================================================================
 
-var ARK_VERSION_STR = "0.8.14";
+var ARK_VERSION_STR = "0.9.0";
 
 var DEFAULT_TRANSACTION_LOG_PATH = "/var/lib/agnos/ark/transaction.log";
 var DEFAULT_PACKAGE_DB_PATH = "/var/lib/agnos/ark/packages.json";
 var DEFAULT_SHAKTI_PATH = "/usr/bin/shakti";
+var DEFAULT_TRUST_KEYS_PATH = "/etc/agnos/ark/trusted_keys";
 
 # ANSI color codes
 var ANSI_RESET = "\x1b[0m";
@@ -225,7 +226,7 @@ fn ark_result_new(success, message, packages, source) {
 # apply: 0 = plan only (default — safe); 1 = run the plan via the executor.
 # =========================================================================
 
-var ACFG_SZ = 88;
+var ACFG_SZ = 104;
 
 fn acfg_strategy(p) { return load64(p); }
 fn acfg_confirm_sys(p) { return load64(p + 8); }
@@ -241,6 +242,12 @@ fn acfg_shakti_path(p) { return load64(p + 72); }
 fn acfg_set_shakti_path(p, v) { store64(p + 72, v); }
 fn acfg_apply(p) { return load64(p + 80); }
 fn acfg_set_apply(p, v) { store64(p + 80, v); }
+# Trust anchor for `.ark` signatures: file of trusted hex Ed25519 pubkeys.
+fn acfg_trust_keys(p) { return load64(p + 88); }
+fn acfg_set_trust_keys(p, v) { store64(p + 88, v); }
+# Policy: 1 = refuse installs unless the signer is in the trust set (fail closed).
+fn acfg_require_signed(p) { return load64(p + 96); }
+fn acfg_set_require_signed(p, v) { store64(p + 96, v); }
 
 # apply modes (acfg_apply): how the executor treats a built plan.
 enum ApplyMode {
@@ -262,5 +269,7 @@ fn ark_config_default() {
     store64(p + 64, str_from(DEFAULT_TRANSACTION_LOG_PATH));
     store64(p + 72, str_from(DEFAULT_SHAKTI_PATH));
     store64(p + 80, 0);
+    store64(p + 88, str_from(DEFAULT_TRUST_KEYS_PATH));
+    store64(p + 96, 0);
     return p;
 }

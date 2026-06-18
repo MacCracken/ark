@@ -97,21 +97,24 @@ fn apkg_afe_has_payload(e) {
 
 # --- package model ----------------------------------------------------
 # manifest(0) sig_hex(8) entries(16) data_hash(24) data(32) data_len(40)
+# pubkey(48) — hex of the signer's embedded Ed25519 pubkey ("" if unsigned)
 fn apkg_manifest(p) { return load64(p); }
 fn apkg_sig_hex(p) { return load64(p + 8); }
 fn apkg_entries(p) { return load64(p + 16); }
 fn apkg_data_hash(p) { return load64(p + 24); }
 fn apkg_data(p) { return load64(p + 32); }
 fn apkg_data_len(p) { return load64(p + 40); }
+fn apkg_pubkey(p) { return load64(p + 48); }
 
-fn apkg_new(manifest, sig_hex, entries, data_hash, data, data_len) {
-    var p = alloc(48);
+fn apkg_new(manifest, sig_hex, entries, data_hash, data, data_len, pubkey) {
+    var p = alloc(56);
     store64(p, manifest);
     store64(p + 8, sig_hex);
     store64(p + 16, entries);
     store64(p + 24, data_hash);
     store64(p + 32, data);
     store64(p + 40, data_len);
+    store64(p + 48, pubkey);
     return p;
 }
 
@@ -255,13 +258,17 @@ fn ark_pkg_read(path_cstr, max_len) {
     fl_free(ctx);
     if (memeq(calc, buf + r, 32) != 1) { return 0; }
 
-    # Verify the ed25519 signature over the root hash, if present.
+    # Verify the ed25519 signature over the root hash, if present. Capture the
+    # signer's pubkey (hex) so the caller can anchor trust (the signature alone
+    # only proves not-modified-after-signing — see docs/audit/2026-06-18).
     var sig_hex = "";
+    var pubkey_hex = "";
     if (signed != 0) {
         var pk = buf + r + 33;
         var sig = buf + r + 33 + 32;
         if (ed25519_verify(pk, buf + r, 32, sig) != 1) { return 0; }
         sig_hex = hex_encode(sig, 64);
+        pubkey_hex = hex_encode(pk, 32);
     }
 
     # Manifest (uncompressed TOML). All reads are bounded by `r` (the verified
@@ -378,7 +385,45 @@ fn ark_pkg_read(path_cstr, max_len) {
         fl_free(c3);
         data_hash = hex_encode(dh, 32);
     }
-    return apkg_new(manifest, sig_hex, entries, data_hash, data, u_len);
+    return apkg_new(manifest, sig_hex, entries, data_hash, data, u_len, pubkey_hex);
+}
+
+# --- trust anchor -----------------------------------------------------
+# The .ark signature is verified against the package's OWN embedded pubkey, so
+# it proves integrity-after-signing but NOT publisher identity. A trust anchor
+# closes that: the signer's pubkey must be in a configured set of trusted keys.
+
+# Load a trusted-key set from a newline-delimited file of hex Ed25519 pubkeys
+# (one per line; blank lines ignored). Returns a map keyed by hex cstr; an
+# absent/empty file yields an empty (trust-nothing) set.
+fn ark_trust_load(path_cstr) {
+    var store = map_new();
+    var buf = alloc(65536);
+    var n = file_read_all(path_cstr, buf, 65536);
+    if (n <= 0) { return store; }
+    var lines = str_split(str_new(buf, n), 10);
+    var i = 0;
+    while (i < vec_len(lines)) {
+        var ln = str_trim(vec_get(lines, i));
+        var l = str_len(ln);
+        if (l > 0) {
+            var kb = alloc(l + 1);
+            memcpy(kb, str_data(ln), l);
+            store8(kb + l, 0);
+            map_set(store, kb, 1);
+        }
+        i = i + 1;
+    }
+    return store;
+}
+
+# 1 if the package is signed AND its signer pubkey is in the trust set.
+fn ark_pkg_signer_trusted(p, store) {
+    var pk = apkg_pubkey(p);
+    if (pk == 0) { return 0; }
+    if (strlen(pk) == 0) { return 0; }
+    if (map_get(store, pk) > 0) { return 1; }
+    return 0;
 }
 
 # --- installer --------------------------------------------------------
@@ -489,6 +534,17 @@ fn ark_pkg_install(mgr, ark_path_cstr, install_root_cstr, max_len) {
     if (p == 0) {
         return ark_result_new(0, str_from("ark: package read or verification failed"),
         vec_new(), SOURCE_MARKETPLACE);
+    }
+    # Trust gate: when policy requires it, the signer must be in the trust set
+    # (anchors the signature to a known publisher) — else refuse, fail closed.
+    var tcfg = amgr_config(mgr);
+    if (acfg_require_signed(tcfg) == 1) {
+        var store = ark_trust_load(str_data(acfg_trust_keys(tcfg)));
+        if (ark_pkg_signer_trusted(p, store) == 0) {
+            return ark_result_new(0,
+            str_from("ark: refusing install — package signer not trusted (require_signed)"),
+            vec_new(), SOURCE_MARKETPLACE);
+        }
     }
     var m = apkg_manifest(p);
     var name = str_from(apkg_man_name(m));

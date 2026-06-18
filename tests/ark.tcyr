@@ -951,6 +951,44 @@ fn test_pkg_security() {
     assert_eq(apkg_path_safe("/etc/.."), 0, "trailing traversal rejected");
     assert_eq(apkg_path_safe("relative/path"), 0, "non-absolute rejected");
     assert_eq(apkg_path_safe(""), 0, "empty rejected");
+
+    # --- trust anchor (audit finding #4) ---
+    var p = ark_pkg_read("tests/fixtures/sample-signed.ark", 1048576);
+    assert(p != 0, "signed fixture reads");
+    var pkhex = apkg_pubkey(p);
+    assert_eq(strlen(pkhex), 64, "signed package exposes 32-byte pubkey hex");
+    var up = ark_pkg_read("tests/fixtures/sample-unsigned.ark", 1048576);
+    assert_eq(strlen(apkg_pubkey(up)), 0, "unsigned package has no pubkey");
+
+    # Trust set: only a package whose signer key is listed is trusted.
+    file_write_all("/tmp/ark-trust-keys", pkhex, strlen(pkhex));
+    var store = ark_trust_load("/tmp/ark-trust-keys");
+    assert_eq(ark_pkg_signer_trusted(p, store), 1, "signer in trust set -> trusted");
+    var empty = ark_trust_load("/tmp/ark-trust-absent-xyz");
+    assert_eq(ark_pkg_signer_trusted(p, empty), 0, "empty trust set -> untrusted");
+    assert_eq(ark_pkg_signer_trusted(up, store), 0, "unsigned -> never trusted");
+
+    # Install gate: require_signed enforces the trust set (fail closed).
+    var cfg = ark_config_default();
+    store64(cfg + 48, str_from("/tmp/ark-ts-cache"));
+    store64(cfg + 56, str_from("/tmp/ark-ts-db.json"));
+    store64(cfg + 64, str_from("/tmp/ark-ts-txn.log"));
+    acfg_set_require_signed(cfg, 1);
+    acfg_set_trust_keys(cfg, str_from("/tmp/ark-trust-keys"));
+    var mgr = ark_mgr_new(cfg);
+    var okr = ark_pkg_install(mgr, "tests/fixtures/sample-signed.ark", "/tmp/ark-ts-root", 1048576);
+    assert_eq(ares_success(okr), 1, "require_signed + trusted signer -> install ok");
+
+    var cfg2 = ark_config_default();
+    store64(cfg2 + 48, str_from("/tmp/ark-ts-cache"));
+    store64(cfg2 + 56, str_from("/tmp/ark-ts-db2.json"));
+    store64(cfg2 + 64, str_from("/tmp/ark-ts-txn2.log"));
+    acfg_set_require_signed(cfg2, 1);
+    acfg_set_trust_keys(cfg2, str_from("/tmp/ark-trust-absent-xyz"));
+    var mgr2 = ark_mgr_new(cfg2);
+    var rej = ark_pkg_install(mgr2, "tests/fixtures/sample-signed.ark", "/tmp/ark-ts-root2", 1048576);
+    assert_eq(ares_success(rej), 0, "require_signed + untrusted signer -> refused");
+    assert(str_contains(ares_message(rej), str_from("not trusted")), "refusal message");
 }
 
 # =========================================================================

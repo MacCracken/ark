@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.9.0] - 2026-06-18 — Quality-gate milestone
+
+Caps the quality-gate milestone built across 0.8.11–0.8.15: full zugot-corpus
+parse validation (563/563), fuzz harnesses (txn-log / package-name / recipe),
+real-nous integration tests, documentation (guides + examples), a CVE-grounded
+security audit, and — in this release — **trust-anchored package signing**.
+Four real bugs were fixed along the way (recipe heap-overflow, zip-slip,
+decompression bomb, OOB reads). Caveats carried to v1.0: the `cyrius coverage`
+metric is non-actionable (real coverage rose via the added tests), and the
+signing follow-ups below (default-on for marketplace, mela-keyring trust source,
+symlink-target constraint).
+
+### Security — trust-anchored signing (audit finding #4)
+
+- **Trust-anchored `.ark` signature verification.** Previously the signature was verified only against the package's *own embedded pubkey* (self-signed passes) and unsigned packages were accepted — integrity, but no publisher authenticity. Now:
+  - `ark_pkg_read` exposes the signer's pubkey (`apkg_pubkey`).
+  - A configurable **trust set** of hex Ed25519 pubkeys (`ark_trust_load` from `ArkConfig.trust_keys`, default `/etc/agnos/ark/trusted_keys`).
+  - A **`require_signed`** policy (`ArkConfig.require_signed`): when on, `ark_pkg_install` refuses — **fail closed** — any package whose signer isn't in the trust set.
+  - +9 regression assertions (289 total): trusted signer installs; untrusted / unsigned / empty-trust-set are refused.
+- `require_signed` defaults **off** (opt-in) so existing flows are unchanged; production should enable it (and default-on for the marketplace source is a follow-up, as is sourcing the trust set from mela's keyring). See `docs/audit/2026-06-18-pre-v1-audit.md` finding #4.
+
 ## [0.8.14] - 2026-06-18
 
 Fourth chunk of the **v0.9.0 quality-gate milestone** — security audit + hardening.
