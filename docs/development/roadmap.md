@@ -154,6 +154,13 @@ trust-anchored signing.
 - [x] Trust set (`ark_trust_load` / `acfg_trust_keys`) + `require_signed` fail-closed gate in `ark_pkg_install`; signer pubkey exposed (`apkg_pubkey`); +9 assertions (289 tests); closes audit finding #4 core
 - Carried to v1.0 (non-blocking): coverage-metric tooling; default require_signed on for marketplace; source trust from mela's keyring; symlink-target constraint (audit #5)
 
+### v0.9.1 (2026-06-18) — Security hardening follow-ups
+
+- [x] Symlink two-pass materialization (audit #5, CWE-22)
+- [x] Marketplace forces `require_signed` (untrusted → fail closed)
+- [x] Trust set sourced from mela's keyring (`ark_trust_from_keyring` / `ark_trust_load_keyring`)
+- [x] +3 assertions (292 tests); audit findings #4 and #5 resolved
+
 ### Capability inventory (verified against code 2026-06-16)
 
 These were on the backlog but are implemented and tested in the tree today:
@@ -230,7 +237,7 @@ it's the 1.1.x arc.)
 - [x] nous ported to Cyrius and integrated (1.2.7, via `dist/nous.cyr`)
 - [x] Execution backend live — plan → shakti → system (0.8.3)
 - [x] `.ark` read / verify / install + marketplace download (0.8.4–0.8.10)
-- [x] Package signing: `.ark` Ed25519 + per-file hashes verified on install, **trust-anchored** — a configured trust set + `require_signed` fail-closed gate (0.8.15, audit #4). Follow-up: default `require_signed` on for the marketplace source + source the trust set from mela's keyring
+- [x] Package signing: `.ark` Ed25519 + per-file hashes verified on install, **trust-anchored** — configured trust set + `require_signed` fail-closed gate (0.8.15); marketplace forces require_signed + trust set sourced from mela's keyring (0.9.1). Audit #4/#5 resolved
 
 > The full apt+shakti **apply** path and AGNOS-hardware integration are **not
 > v1.0 blockers** — they're the 1.1.x AGNOS track below.

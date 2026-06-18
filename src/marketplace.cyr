@@ -53,6 +53,9 @@ fn ark_marketplace_install(mgr, base_url, cache_dir, name, version, install_root
     if (install_root != 0) {
         if (str_len(install_root) > 0) { iroot = str_data(install_root); }
     }
+    # Marketplace is an untrusted source: always require a trusted signer
+    # (fail closed), regardless of the global require_signed default.
+    acfg_set_require_signed(amgr_config(mgr), 1);
     return ark_pkg_install(mgr, cpath, iroot, max_len);
 }
 

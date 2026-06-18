@@ -859,11 +859,17 @@ fn test_marketplace() {
                                         str_from("myapp"), str_from("2.1.0"));
     assert(str_contains(cp, str_from("myapp-2_1_0.ark")), "cache path built (sanitized)");
 
+    # Marketplace forces require_signed, so provision a trust set with the
+    # fixture's signer key.
+    var fp = ark_pkg_read("tests/fixtures/sample-signed.ark", 1048576);
+    file_write_all("/tmp/ark-mkt-trust", apkg_pubkey(fp), strlen(apkg_pubkey(fp)));
+
     var cfg = ark_config_default();
     store64(cfg + 40, str_from("/tmp/ark-mkt-mkt"));
     store64(cfg + 48, str_from("/tmp/ark-mkt-cache"));
     store64(cfg + 56, str_from("/tmp/ark-mkt-db.json"));
     store64(cfg + 64, str_from("/tmp/ark-mkt-txn.log"));
+    acfg_set_trust_keys(cfg, str_from("/tmp/ark-mkt-trust"));
     var mgr = ark_mgr_new(cfg);
 
     # Cache hit: pre-stage the fixture at the computed cache path so install
@@ -878,9 +884,22 @@ fn test_marketplace() {
                                       str_from("/tmp/ark-mkt-cache"),
                                       str_from("myapp"), str_from("2.1.0"),
                                       str_from("/tmp/ark-mkt-root"), 1048576);
-    assert_eq(ares_success(res), 1, "cache-hit marketplace install succeeds");
+    assert_eq(ares_success(res), 1, "cache-hit marketplace install (trusted signer) succeeds");
     assert(file_exists("/tmp/ark-mkt-root/usr/bin/app"), "marketplace install materialized file");
     assert(pkg_db_is_installed(amgr_db(mgr), str_from("myapp")), "registered in db");
+
+    # Untrusted signer: marketplace forces require_signed -> refused (fail closed).
+    var cfgu = ark_config_default();
+    store64(cfgu + 48, str_from("/tmp/ark-mkt-cache"));
+    store64(cfgu + 56, str_from("/tmp/ark-mkt-dbu.json"));
+    store64(cfgu + 64, str_from("/tmp/ark-mkt-txnu.log"));
+    acfg_set_trust_keys(cfgu, str_from("/tmp/ark-mkt-trust-absent"));
+    var mgru = ark_mgr_new(cfgu);
+    var rej = ark_marketplace_install(mgru, str_from("https://example.invalid/"),
+                                      str_from("/tmp/ark-mkt-cache"),
+                                      str_from("myapp"), str_from("2.1.0"),
+                                      str_from("/tmp/ark-mkt-rootu"), 1048576);
+    assert_eq(ares_success(rej), 0, "marketplace install w/ untrusted signer refused");
 
     # Invalid version segment is rejected by mela's validator.
     var bad = ark_marketplace_install(mgr, str_from("https://example.invalid/"),
@@ -989,6 +1008,14 @@ fn test_pkg_security() {
     var rej = ark_pkg_install(mgr2, "tests/fixtures/sample-signed.ark", "/tmp/ark-ts-root2", 1048576);
     assert_eq(ares_success(rej), 0, "require_signed + untrusted signer -> refused");
     assert(str_contains(ares_message(rej), str_from("not trusted")), "refusal message");
+
+    # --- trust set sourced from a mela publisher keyring ---
+    var kr = mela_keyring_new();
+    mela_keyring_add_key(kr, kv_new(str_from("pub-myapp"), 0, 0, 0, str_from(pkhex)));
+    var ks = ark_trust_from_keyring(kr);
+    assert_eq(ark_pkg_signer_trusted(p, ks), 1, "keyring-sourced trust accepts the signer");
+    var emptykr = mela_keyring_new();
+    assert_eq(ark_pkg_signer_trusted(p, ark_trust_from_keyring(emptykr)), 0, "empty keyring -> untrusted");
 }
 
 # =========================================================================

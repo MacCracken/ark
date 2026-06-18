@@ -426,6 +426,38 @@ fn ark_pkg_signer_trusted(p, store) {
     return 0;
 }
 
+# Build an ark trust set from a mela publisher keyring: every key version's
+# public key becomes a trusted hex key. This anchors `.ark` signatures to
+# mela's keyring (the marketplace's publisher identities) rather than a
+# separately-provisioned key file.
+fn ark_trust_from_keyring(kr) {
+    var store = map_new();
+    var ids = map_keys(kr);
+    var i = 0;
+    while (i < vec_len(ids)) {
+        var versions = mela_keyring_get_all_versions(kr, vec_get(ids, i));
+        var j = 0;
+        while (j < vec_len(versions)) {
+            var pkhex = mela_kv_public_key_hex(vec_get(versions, j));
+            var l = str_len(pkhex);
+            var kb = alloc(l + 1);
+            memcpy(kb, str_data(pkhex), l);
+            store8(kb + l, 0);
+            map_set(store, kb, 1);
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return store;
+}
+
+# Load a mela keyring directory and build an ark trust set from it.
+fn ark_trust_load_keyring(dir_cstr) {
+    var kr = mela_keyring_new();
+    keyring_load_dir(kr, str_from(dir_cstr));
+    return ark_trust_from_keyring(kr);
+}
+
 # --- installer --------------------------------------------------------
 # Materializes a verified `.ark` to disk and registers it in PackageDb.
 
@@ -566,31 +598,44 @@ fn ark_pkg_install(mgr, ark_path_cstr, install_root_cstr, max_len) {
         gi = gi + 1;
     }
 
+    # Pass 1 — directories + regular/config files. Symlinks are deferred to
+    # pass 2 so a malicious symlink entry can't be planted and then have a
+    # later same-archive write redirected through it (audit #5): when these
+    # writes run, no archive symlink exists yet, so every parent is a real dir.
     var i = 0;
     var nfiles = 0;
     while (i < vec_len(entries)) {
         var e = vec_get(entries, i);
-        var pathc = apkg_afe_path(e);
-        var full = apkg_join(install_root_cstr, pathc);
         var ft = apkg_afe_file_type(e);
-        if (ft == ARK_FT_DIRECTORY) {
-            apkg_mkdir_p(full);
-        } else {
-            if (ft == ARK_FT_SYMLINK) {
-                apkg_mkdir_parents(full);
-                sys_symlink(apkg_afe_symlink_target(e), full);
+        if (ft != ARK_FT_SYMLINK) {
+            var pathc = apkg_afe_path(e);
+            var full = apkg_join(install_root_cstr, pathc);
+            if (ft == ARK_FT_DIRECTORY) {
+                apkg_mkdir_p(full);
             } else {
-                # REGULAR or CONFIG: write the verified payload bytes.
                 apkg_mkdir_parents(full);
                 file_write_all(full, data + apkg_afe_data_offset(e), apkg_afe_size(e));
+                var pstr = str_from(pathc);
+                vec_push(files, pstr);
+                var hh = apkg_afe_sha256(e);
+                if (hh != 0) {
+                    if (strlen(hh) == 64) { pdbe_set_file_hash(entry, pstr, str_from(hh)); }
+                }
+                nfiles = nfiles + 1;
             }
-            # Record the owned package path + its content hash.
-            var pstr = str_from(pathc);
-            vec_push(files, pstr);
-            var hh = apkg_afe_sha256(e);
-            if (hh != 0) {
-                if (strlen(hh) == 64) { pdbe_set_file_hash(entry, pstr, str_from(hh)); }
-            }
+        }
+        i = i + 1;
+    }
+    # Pass 2 — symlinks, created last (their parents are now real dirs/files).
+    i = 0;
+    while (i < vec_len(entries)) {
+        var es = vec_get(entries, i);
+        if (apkg_afe_file_type(es) == ARK_FT_SYMLINK) {
+            var spath = apkg_afe_path(es);
+            var sfull = apkg_join(install_root_cstr, spath);
+            apkg_mkdir_parents(sfull);
+            sys_symlink(apkg_afe_symlink_target(es), sfull);
+            vec_push(files, str_from(spath));
             nfiles = nfiles + 1;
         }
         i = i + 1;

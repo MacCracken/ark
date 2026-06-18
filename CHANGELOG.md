@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.9.1] - 2026-06-18 — Security hardening follow-ups
+
+Closes the audit follow-ups carried out of 0.9.0.
+
+### Security
+
+- **Symlink hardening (audit #5, CWE-22).** `ark_pkg_install` now materializes in **two passes** — directories + regular/config files first, symlinks last — so a malicious symlink entry can't be planted and then have a same-archive write redirected through it. Legitimate symlinks still install.
+- **Marketplace installs force `require_signed`.** A marketplace install (untrusted source) now requires a trusted signer **regardless** of the global `require_signed` default — fail closed. (Global default stays off, so explicit local `ark install ./pkg.ark` is user-discretion.)
+- **Trust set from mela's keyring.** `ark_trust_from_keyring` / `ark_trust_load_keyring` build ark's trust set from a mela publisher keyring (`mela_keyring_*` / `mela_kv_public_key_hex`), so `.ark` signatures anchor to the marketplace's publisher identities instead of a separately-provisioned key file.
+- +3 regression assertions (292 total): keyring-sourced trust accepts the signer, empty keyring rejects, and an untrusted-signer marketplace install is refused. Audit findings #4 and #5 now resolved (`docs/audit/2026-06-18-pre-v1-audit.md`).
+
 ## [0.9.0] - 2026-06-18 — Quality-gate milestone
 
 Caps the quality-gate milestone built across 0.8.11–0.8.15: full zugot-corpus
