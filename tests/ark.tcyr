@@ -939,6 +939,20 @@ fn test_nous_integration() {
     assert_eq(payload(bog), 0, "unknown pkg -> none");
 }
 
+fn test_pkg_security() {
+    test_group("pkg_security");
+    # Zip-slip / path-traversal guard (CWE-22) on .ark entry paths.
+    # apkg_path_safe takes a cstr (the entry path is stored NUL-terminated).
+    assert_eq(apkg_path_safe("/usr/bin/app"), 1, "normal path safe");
+    assert_eq(apkg_path_safe("/etc/nginx/nginx.conf"), 1, "nested path safe");
+    assert_eq(apkg_path_safe("/lib..so"), 1, "dots-in-name not a traversal");
+    assert_eq(apkg_path_safe("/../../etc/passwd"), 0, "leading traversal rejected");
+    assert_eq(apkg_path_safe("/usr/../../etc/x"), 0, "mid traversal rejected");
+    assert_eq(apkg_path_safe("/etc/.."), 0, "trailing traversal rejected");
+    assert_eq(apkg_path_safe("relative/path"), 0, "non-absolute rejected");
+    assert_eq(apkg_path_safe(""), 0, "empty rejected");
+}
+
 # =========================================================================
 # Main test runner
 # =========================================================================
@@ -961,6 +975,7 @@ fn test_main() {
     test_ark_install_cli();
     test_marketplace();
     test_nous_integration();
+    test_pkg_security();
     return assert_summary();
 }
 

@@ -138,6 +138,12 @@
 - [x] `docs/guides/getting-started.md` + `docs/examples/install-a-package.md`; README refreshed to the shipped CLI
 - Remaining 0.9.0 gates: formal security audit; coverage metric (tooling). E2e: install→verify tested + documented (build-via-takumi is CI/hardware)
 
+### v0.8.14 (2026-06-18) - v0.9.0 quality gates (chunk 4: security audit)
+
+- [x] CVE-grounded audit of post-P(-1) surfaces (`docs/audit/2026-06-18-pre-v1-audit.md`)
+- [x] Fixed zip-slip (CWE-22), decompression bomb (CWE-409), OOB reads (CWE-125) in the `.ark` reader/installer; +8 regression assertions (280 tests)
+- Open (→ signing criterion): trust-anchored signature verification + require-signed policy; symlink-target constraint
+
 ### Capability inventory (verified against code 2026-06-16)
 
 These were on the backlog but are implemented and tested in the tree today:
@@ -197,7 +203,7 @@ features. (AGNOS-gated execution work is **not** here; it's the 1.1.x arc.)
 
 - [ ] 90%+ test coverage
 - [ ] Benchmarks stable across releases (`cyrius bench tests/ark.bcyr`)
-- [ ] Formal security audit (P(-1) internal done; formal pass pending)
+- [x] Formal security audit (CVE-grounded) of the post-P(-1) surfaces — `docs/audit/2026-06-18-pre-v1-audit.md`; fixed zip-slip + decompression-bomb + OOB-read (0.8.14). Trust-anchor / require-signed findings feed the signing criterion below.
 - [x] Documentation complete — examples + guides current with the shipped CLI (`docs/guides/getting-started.md`, `docs/examples/install-a-package.md`, README refreshed; 0.8.13)
 - [x] Recipe parsing validated against the full zugot corpus — **563/563 parse** (`tests/zugot_corpus.cyr`, 0.8.11)
 - [x] Integration tests against the real nous resolver — `test_nous_integration` (recipe-backed resolve_all + search + unknown-miss; 0.8.12)
@@ -212,7 +218,7 @@ features. (AGNOS-gated execution work is **not** here; it's the 1.1.x arc.)
 - [x] nous ported to Cyrius and integrated (1.2.7, via `dist/nous.cyr`)
 - [x] Execution backend live — plan → shakti → system (0.8.3)
 - [x] `.ark` read / verify / install + marketplace download (0.8.4–0.8.10)
-- [x] Package signing: `.ark` Ed25519 verified on install
+- [~] Package signing: `.ark` Ed25519 + per-file hashes verified on install — **but against the package's own embedded pubkey (no trust anchor), and unsigned is accepted** (audit finding #4). Trust-anchored verification (mela keyring / configured store) + require-signed policy is the remaining signing work before installing from untrusted marketplaces
 
 > The full apt+shakti **apply** path and AGNOS-hardware integration are **not
 > v1.0 blockers** — they're the 1.1.x AGNOS track below.

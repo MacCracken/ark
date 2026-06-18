@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.8.14] - 2026-06-18
+
+Fourth chunk of the **v0.9.0 quality-gate milestone** — security audit + hardening.
+
+### Security
+
+- **Pre-v1.0 security audit** of the post-P(-1) surfaces (`.ark` reader/installer, marketplace download, executor), grounded in current package-manager 0-day/CVE classes (zip-slip, signature fail-open / no-trust-anchor, decompression bombs, OOB reads). Findings doc: `docs/audit/2026-06-18-pre-v1-audit.md`. Three exploitable issues fixed:
+
+### Fixed
+
+- **Zip-slip / path traversal (CWE-22, HIGH)** in `ark_pkg_install` — entry paths were joined to the install root and written unchecked; a malicious `.ark` could write outside the root (arbitrary file write). New `apkg_path_safe()` (leading `/`, no `..` component) + a **pre-scan that aborts before any write** if any entry path is unsafe. Regression-tested (`test_pkg_security`, +8 assertions).
+- **Decompression bomb (CWE-409, MED)** — `ark_pkg_read` now rejects a declared uncompressed size > 256 MiB (`ARK_MAX_DATA`) before allocating, and requires the compressed bytes to fit the verified prefix.
+- **Out-of-bounds reads (CWE-125, MED)** — every variable-length read in `ark_pkg_read` (manifest, per-entry path/target, data block) is now bounded by the SHA-256-verified prefix length; the per-file hash loop checks each payload lies within the inflated buffer. Malformed/truncated `.ark` is rejected, not crashed.
+
+### Notes
+
+- Two trust-model findings remain **open and documented** (feed the v1.0 "package signing verified end-to-end" criterion): the `.ark` signature is verified against the package's *own embedded pubkey* (no trust anchor) and unsigned packages are accepted; and symlink-entry targets aren't constrained. Recommendation: verify against mela's keyring / a configured trust store and require signatures for untrusted sources, failing closed.
+
 ## [0.8.13] - 2026-06-18
 
 Third chunk of the **v0.9.0 quality-gate milestone** — documentation.

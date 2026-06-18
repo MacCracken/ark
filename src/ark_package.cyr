@@ -37,6 +37,9 @@ enum ArkPkgFmt {
     ARK_FT_DIRECTORY = 1;
     ARK_FT_SYMLINK = 2;
     ARK_FT_CONFIG = 3;
+    # Decompression-bomb cap: reject a declared uncompressed size above 256 MiB
+    # before allocating, so a tiny `.ark` can't claim a huge `u_len`.
+    ARK_MAX_DATA = 268435456;
 }
 
 # --- little-endian readers over a raw byte buffer ---------------------
@@ -261,10 +264,13 @@ fn ark_pkg_read(path_cstr, max_len) {
         sig_hex = hex_encode(sig, 64);
     }
 
-    # Manifest (uncompressed TOML).
+    # Manifest (uncompressed TOML). All reads are bounded by `r` (the verified
+    # prefix length) so a malformed `.ark` can't drive an out-of-bounds read.
     var off = ARK_HEADER_LEN;
+    if (off + 4 > r) { return 0; }
     var mlen = apkg_u32(buf, off);
     off = off + 4;
+    if (off + mlen > r) { return 0; }
     var mstr = str_new(buf + off, mlen);
     off = off + mlen;
     var sections = toml_parse(mstr);
@@ -273,40 +279,54 @@ fn ark_pkg_read(path_cstr, max_len) {
     var manifest = apkg_man_from_pairs(pairs);
 
     # File index.
+    if (off + 4 > r) { return 0; }
     var count = apkg_u32(buf, off);
     off = off + 4;
     var entries = vec_new();
     var i = 0;
     while (i < count) {
+        if (off + 6 > r) { return 0; }
         var ft = apkg_u8(buf, off); off = off + 1;
         var eflags = apkg_u8(buf, off); off = off + 1;
         var plen = apkg_u32(buf, off); off = off + 4;
+        if (off + plen > r) { return 0; }
         var path = alloc(plen + 1);
         memcpy(path, buf + off, plen);
         store8(path + plen, 0);
         off = off + plen;
+        if (off + 8 > r) { return 0; }
         var size = apkg_u64(buf, off); off = off + 8;
         var sha_hex = "";
         if ((eflags & 1) != 0) {
+            if (off + 32 > r) { return 0; }
             sha_hex = hex_encode(buf + off, 32);
             off = off + 32;
         }
         var target = 0;
         if ((eflags & 2) != 0) {
+            if (off + 4 > r) { return 0; }
             var tlen = apkg_u32(buf, off); off = off + 4;
+            if (off + tlen > r) { return 0; }
             target = alloc(tlen + 1);
             memcpy(target, buf + off, tlen);
             store8(target + tlen, 0);
             off = off + tlen;
         }
+        if (off + 8 > r) { return 0; }
         var doff = apkg_u64(buf, off); off = off + 8;
         vec_push(entries, apkg_afe_new(path, sha_hex, size, ft, target, doff));
         i = i + 1;
     }
 
-    # Data block: inflate.
+    # Data block: inflate. Bound the declared sizes before allocating, both
+    # against the file (compressed bytes must fit in `r`) and against the
+    # decompression-bomb cap (`u_len`).
+    if (off + 16 > r) { return 0; }
     var u_len = apkg_u64(buf, off); off = off + 8;
     var c_len = apkg_u64(buf, off); off = off + 8;
+    if (c_len > r) { return 0; }
+    if (off + c_len > r) { return 0; }
+    if (u_len > ARK_MAX_DATA) { return 0; }
     var data = 0;
     if (u_len > 0) {
         data = alloc(u_len);
@@ -314,6 +334,7 @@ fn ark_pkg_read(path_cstr, max_len) {
             var n = deflate_decompress(buf + off, c_len, data, u_len);
             if (n != u_len) { return 0; }
         } else {
+            if (off + u_len > r) { return 0; }
             memcpy(data, buf + off, u_len);
         }
     }
@@ -325,6 +346,8 @@ fn ark_pkg_read(path_cstr, max_len) {
         var e = vec_get(entries, i);
         if (apkg_afe_has_payload(e) == 1) {
             var sz = apkg_afe_size(e);
+            # Payload must lie within the inflated buffer (no OOB hash read).
+            if (cursor + sz > u_len) { return 0; }
             var hh = apkg_afe_sha256(e);
             if (hh != 0) {
                 if (strlen(hh) == 64) {
@@ -429,6 +452,34 @@ fn apkg_mkdir_parents(path) {
     return 0;
 }
 
+# Zip-slip / path-traversal guard (CWE-22). A `.ark` entry path is
+# absolute-under-root (leading '/') and must contain no ".." component, so it
+# cannot escape the install root. Returns 1 if safe, 0 otherwise. ".." is only
+# rejected as a whole path component, so legitimate names like "lib..so" pass.
+fn apkg_path_safe(pathc) {
+    var n = strlen(pathc);
+    if (n == 0) { return 0; }
+    if (load8(pathc) != 47) { return 0; }
+    var i = 0;
+    while (i < n) {
+        if (load8(pathc + i) == 46) {
+            if (i + 1 < n) {
+                if (load8(pathc + i + 1) == 46) {
+                    var before_slash = 0;
+                    if (i == 0) { before_slash = 1; }
+                    else { if (load8(pathc + i - 1) == 47) { before_slash = 1; } }
+                    var after_slash = 0;
+                    if (i + 2 == n) { after_slash = 1; }
+                    else { if (load8(pathc + i + 2) == 47) { after_slash = 1; } }
+                    if (before_slash == 1) { if (after_slash == 1) { return 0; } }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
 # Read + verify a `.ark`, lay its files down under `install_root_cstr`
 # (use "" for the real root), and register the package in the manager's
 # PackageDb with per-file hashes + signature. Records an install
@@ -446,6 +497,18 @@ fn ark_pkg_install(mgr, ark_path_cstr, install_root_cstr, max_len) {
     var files = pdbe_files(entry);
     var data = apkg_data(p);
     var entries = apkg_entries(p);
+
+    # Zip-slip guard: reject the whole package if ANY entry path could escape
+    # the install root — before writing a single file (no partial install).
+    var gi = 0;
+    while (gi < vec_len(entries)) {
+        if (apkg_path_safe(apkg_afe_path(vec_get(entries, gi))) == 0) {
+            return ark_result_new(0,
+            str_from("ark: refusing install — unsafe package path (traversal)"),
+            vec_new(), SOURCE_MARKETPLACE);
+        }
+        gi = gi + 1;
+    }
 
     var i = 0;
     var nfiles = 0;
