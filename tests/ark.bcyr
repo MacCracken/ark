@@ -1,4 +1,5 @@
 # ark benchmarks - manual timing (fn pointers unstable via pipe compile)
+# Three tiers: [tier1] construct/format · [tier2] package-db · [tier3] transaction/output
 
 include "src/types.cyr"
 include "src/output.cyr"
@@ -32,6 +33,7 @@ fn bmain() {
     alloc_init();
     println("=== ark benchmarks ===");
 
+    println("[tier1] construct / format");
     var n = 100000;
     var t0 = now_us();
     var i = 0;
@@ -66,6 +68,7 @@ fn bmain() {
         i = i + 1;
     }
 
+    println("[tier2] package-db");
     n = 10000;
     t0 = now_us();
     i = 0;
@@ -82,6 +85,7 @@ fn bmain() {
     while (i < n) { pkg_db_check_integrity(db); i = i + 1; }
     report("db_integrity_20", n, t0, now_us());
 
+    println("[tier3] transaction / output");
     # TransactionLog
     n = 10000;
     t0 = now_us();
