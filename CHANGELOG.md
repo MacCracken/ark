@@ -58,6 +58,14 @@ marketplace/UX enhancement arc is pushed back behind this release.
   the bench and fuzz harnesses were updated to include the source files defining
   the `cli.cyr` symbols they reference, and 3 files were re-formatted for the
   6.3.5 continuation-line rule.
+- **Dependency alignment for 6.3.5.** sigil `3.8.0` → `3.9.7` (provides
+  `sha384_init_into`, which the 6.3.5 stdlib TLS now requires, and drops the
+  external **agnosys** dep — internalized via the agnosys→agnodrm decomposition;
+  the stale vendored `lib/agnosys.cyr` is removed), sandhi `1.6.7` → `1.7.0`, and
+  **mela `1.0.0` → `1.0.1`** (a patch that bumps mela's own transitive
+  sigil/sandhi/sankoch pins to match, so the whole graph resolves on one sigil).
+  Without this the clean-checkout CI build failed on an undefined
+  `sha384_init_into` (sigil 3.8.0 was too old for the 6.3.5 TLS).
 - **`ark_rollback` is now source-aware.** A reversed op uses the original op's
   source — a native/marketplace install rolls back through the native remover
   (not `apt`) and at the recorded version — instead of always emitting system

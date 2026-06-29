@@ -17,7 +17,7 @@ stdlib = ["string", "fmt", "alloc", "vec", "str", "slice", "syscalls", "io", "ar
 [deps.sigil]
 git = "https://github.com/MacCracken/sigil.git"
 path = "../sigil"
-tag = "3.8.0"
+tag = "3.9.7"
 modules = ["dist/sigil.cyr"]
 
 [deps.nous]
@@ -33,7 +33,7 @@ modules = ["dist/nous.cyr"]
 [deps.mela]
 git = "https://github.com/MacCracken/mela.git"
 path = "../mela"
-tag = "1.0.0"
+tag = "1.0.1"
 modules = ["dist/mela.cyr"]
 
 [deps.agnostik]
@@ -45,5 +45,5 @@ modules = ["dist/agnostik.cyr"]
 [deps.sandhi]
 git = "https://github.com/MacCracken/sandhi.git"
 path = "../sandhi"
-tag = "1.6.7"
+tag = "1.7.0"
 modules = ["dist/sandhi.cyr"]
