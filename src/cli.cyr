@@ -27,6 +27,7 @@ fn parse_args(ac, av) {
                 acmd_set_tag(c, CMD_GROUP_INSTALL);
                 acmd_set_group(c, str_from(argv(i)));
             } elif (streq(arg, "--apply") || streq(arg, "--dry-run")) { }
+            elif (streq(arg, "--system-backend")) { i = i + 1; }
             elif (streq(arg, "--root")) {
                 i = i + 1;
                 if (i >= ac) { println("--root requires a directory"); return 0; }
@@ -52,6 +53,7 @@ fn parse_args(ac, av) {
             var arg = argv(i);
             if (streq(arg, "--purge")) { acmd_set_purge(c, 1); }
             elif (streq(arg, "--apply") || streq(arg, "--dry-run")) { }
+            elif (streq(arg, "--system-backend")) { i = i + 1; }
             elif (load8(arg) != 45) { vec_push(acmd_packages(c), str_from(arg)); }
             else { println("Unknown flag for remove"); return 0; }
             i = i + 1;
@@ -244,6 +246,13 @@ fn load_config_from(path) {
         if (val > 0) { store64(config + 40, val); }
         val = toml_get(pairs, "cache_dir");
         if (val > 0) { store64(config + 48, val); }
+        val = toml_get(pairs, "system_backend");
+        if (val > 0) {
+            var br = parse_backend_str(str_data(val));
+            if (is_ok(br)) { acfg_set_system_backend(config, result_unwrap(br)); }
+        }
+        val = toml_get(pairs, "apt_wrapper");
+        if (val > 0) { acfg_set_apt_wrapper(config, val); }
         i = i + 1;
     }
     return config;
@@ -289,7 +298,9 @@ fn confirm(prompt) {
     print(str_data(prompt), str_len(prompt));
     print(" [y/N] ", 7);
     var buf[16];
-    var n = syscall(SYS_READ, STDIN, &buf, 128);
+    # Read at most the buffer size (16) — the prior 128 over-read past a 16-byte
+    # stack buffer; we only need the first character of the reply.
+    var n = syscall(SYS_READ, STDIN, &buf, 16);
     if (n <= 0) { return 0; }
     var first = load8(&buf);
     if (first == 121 || first == 89) { return 1; }
@@ -353,6 +364,19 @@ fn main() {
         if (streq(argv(i), "--no-color")) { acfg_set_color(config, 0); }
         if (streq(argv(i), "--apply")) { acfg_set_apply(config, APPLY_REAL); }
         if (streq(argv(i), "--dry-run")) { acfg_set_apply(config, APPLY_DRY); }
+        if (streq(argv(i), "--system-backend")) {
+            if (i + 1 >= ac) {
+                println("--system-backend requires a value (apt | apt-agnos | native)");
+                return 1;
+            }
+            var br = parse_backend_str(argv(i + 1));
+            if (is_ok(br)) { acfg_set_system_backend(config, result_unwrap(br)); }
+            else {
+                println("Unknown system backend (use: apt | apt-agnos | native)");
+                return 1;
+            }
+            i = i + 1;
+        }
         i = i + 1;
     }
     # Confirm only when a step will actually run. Plan-only (default) and

@@ -273,12 +273,23 @@ fn ark_rollback(mgr, txn_id_str) {
         var op = vec_get(ops, i);
         var ot = top_type(op);
         var pkg = top_pkg(op);
+        # Reverse with the SAME source as the original op, so each source rolls
+        # back through its own backend (marketplace/community via the native
+        # remover, flutter via agpkg, system via apt/native) — never silently
+        # misrouted to apt.
+        var osrc = top_source(op);
+        var mkt = (osrc == SOURCE_MARKETPLACE || osrc == SOURCE_COMMUNITY);
+        var flutter = (osrc == SOURCE_FLUTTER_APP);
         if (ot == OP_INSTALL) {
-            vec_push(iplan_steps(plan), step_system_remove(pkg, 0));
+            if (mkt == 1) { vec_push(iplan_steps(plan), step_marketplace_remove(pkg)); }
+            elif (flutter == 1) { vec_push(iplan_steps(plan), step_flutter_remove(pkg)); }
+            else { vec_push(iplan_steps(plan), step_system_remove(pkg, 0)); }
             vec_push(affected, pkg);
         }
         if (ot == OP_REMOVE) {
-            vec_push(iplan_steps(plan), step_system_install(pkg, str_from("")));
+            if (mkt == 1) { vec_push(iplan_steps(plan), step_marketplace_install(pkg, top_ver(op))); }
+            elif (flutter == 1) { vec_push(iplan_steps(plan), step_flutter_install(pkg, top_ver(op))); }
+            else { vec_push(iplan_steps(plan), step_system_install(pkg, top_ver(op))); }
             vec_push(affected, pkg);
         }
         if (i == 0) { break; }
@@ -297,7 +308,7 @@ fn ark_rollback(mgr, txn_id_str) {
 # Backup: copy packages.json and transaction.log to a timestamped dir
 fn ark_backup(mgr) {
     var cfg = amgr_config(mgr);
-    var ts = syscall(201, 0);
+    var ts = ark_now_secs();
     var sb = str_builder_new();
     str_builder_add(sb, acfg_cache_dir(cfg));
     str_builder_add_cstr(sb, "/backup-");
@@ -636,13 +647,19 @@ fn ark_plan_remove(mgr, packages, purge) {
     var plan = install_plan_new();
     var steps = iplan_steps(plan);
     var r = amgr_resolver(mgr);
+    var db = amgr_db(mgr);
     var i = 0;
     while (i < vec_len(packages)) {
         var name = vec_get(packages, i);
+        # Carry the installed version on the remove step so a rollback-of-remove
+        # reinstalls at the right version (apt lowering ignores the version).
+        var ver = str_from("");
+        var e = pkg_db_get(db, str_data(name));
+        if (e != 0) { ver = pdbe_version(e); }
         if (r != 0 && resolver_is_mkt(r, name)) {
-            vec_push(steps, step_marketplace_remove(name));
+            vec_push(steps, step_new(STEP_MARKETPLACE_REMOVE, name, ver, 0));
         } else {
-            vec_push(steps, step_system_remove(name, purge));
+            vec_push(steps, step_new(STEP_SYSTEM_REMOVE, name, ver, purge));
             iplan_set_root(plan, 1);
         }
         i = i + 1;

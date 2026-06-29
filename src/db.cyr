@@ -35,7 +35,7 @@ fn db_entry_new(name, version, source) {
     store64(p, name);
     store64(p + 8, version);
     store64(p + 16, source);
-    store64(p + 24, syscall(201, 0));
+    store64(p + 24, ark_now_secs());
     store64(p + 32, str_from("root"));
     store64(p + 40, 0);
     store64(p + 48, str_from(""));
@@ -275,13 +275,16 @@ fn pkg_db_save(db) {
     str_builder_add_int(tmp_sb, syscall(SYS_GETPID));
     var tmp_path = str_builder_build(tmp_sb);
     var tmp_cstr = str_data(tmp_path);
-    # O_WRONLY(1) | O_CREAT(64) | O_EXCL(128) = 193, mode 0600 = 384
-    var fd = syscall(SYS_OPEN, tmp_cstr, 193, 384);
+    # Secure temp: O_WRONLY | O_CREAT | O_EXCL (named flags, no magic 193),
+    # mode 0600 = 384. open/write/close go through the portable file_* wrappers
+    # and fsync + atomic rename through the portable shims, so the agnos
+    # cross-build resolves the right Sys numbers / ABIs (M3).
+    var fd = file_open(tmp_cstr, O_WRONLY | O_CREAT | O_EXCL, 384);
     if (fd < 0) { return 0; }
-    syscall(SYS_WRITE, fd, str_data(json), str_len(json));
-    syscall(74, fd);
-    syscall(SYS_CLOSE, fd);
-    syscall(82, tmp_cstr, str_data(pdb_path(db)));
+    file_write(fd, str_data(json), str_len(json));
+    ark_fsync(fd);
+    file_close(fd);
+    ark_rename(tmp_cstr, str_data(pdb_path(db)));
     return 1;
 }
 
@@ -389,7 +392,7 @@ fn pkg_db_check_integrity(db) {
         var entry = vec_get(all, i);
         if (vec_len(pdbe_files(entry)) == 0) {
             vec_push(issues, integrity_issue(
-                pdbe_name(entry), ISSUE_NO_MANIFEST, str_from("")));
+            pdbe_name(entry), ISSUE_NO_MANIFEST, str_from("")));
         }
         i = i + 1;
     }
@@ -415,7 +418,7 @@ fn pkg_db_check_integrity_full(db, pkg_filter) {
         var fls = pdbe_files(entry);
         if (vec_len(fls) == 0) {
             vec_push(issues, integrity_issue(
-                pdbe_name(entry), ISSUE_NO_MANIFEST, str_from("")));
+            pdbe_name(entry), ISSUE_NO_MANIFEST, str_from("")));
             i = i + 1;
             continue;
         }
@@ -424,7 +427,7 @@ fn pkg_db_check_integrity_full(db, pkg_filter) {
             var fpath = vec_get(fls, j);
             if (file_exists(str_data(fpath)) == 0) {
                 vec_push(issues, integrity_issue(
-                    pdbe_name(entry), ISSUE_MISSING_FILE, fpath));
+                pdbe_name(entry), ISSUE_MISSING_FILE, fpath));
                 j = j + 1;
                 continue;
             }
@@ -436,12 +439,12 @@ fn pkg_db_check_integrity_full(db, pkg_filter) {
                 if (actual > 0) {
                     if (str_eq(actual, expected) == 0) {
                         vec_push(issues, integrity_issue(
-                            pdbe_name(entry), ISSUE_CHECKSUM_MISMATCH,
-                            fpath));
+                        pdbe_name(entry), ISSUE_CHECKSUM_MISMATCH,
+                        fpath));
                     }
                 } else {
                     vec_push(issues, integrity_issue(
-                        pdbe_name(entry), ISSUE_MISSING_FILE, fpath));
+                    pdbe_name(entry), ISSUE_MISSING_FILE, fpath));
                 }
             }
             j = j + 1;

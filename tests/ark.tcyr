@@ -2,6 +2,7 @@
 # Uses accessor functions (load64/store64) for struct field access
 
 include "src/types.cyr"
+include "src/portable.cyr"
 include "src/output.cyr"
 include "src/transaction.cyr"
 include "src/db.cyr"
@@ -358,7 +359,7 @@ fn test_ark_output() {
     var out = ark_output_new();
     ark_output_add(out, output_line_header(str_from("Test Header")));
     var pkg_line = output_line_package(
-        str_from("nginx"), str_from("1.24.0"), SOURCE_SYSTEM, str_from("HTTP server"));
+    str_from("nginx"), str_from("1.24.0"), SOURCE_SYSTEM, str_from("HTTP server"));
     ark_output_add(out, pkg_line);
     ark_output_add(out, output_line_separator());
     ark_output_add(out, output_line_success(str_from("Done")));
@@ -469,7 +470,7 @@ fn test_security() {
     # L3: Case-insensitive search
     var db = pkg_db_new();
     pkg_db_register(db, make_test_entry(
-        str_from("Nginx-Core"), str_from("1.0"), SOURCE_SYSTEM, 1024, vec_new()));
+    str_from("Nginx-Core"), str_from("1.0"), SOURCE_SYSTEM, 1024, vec_new()));
     var results = pkg_db_search(db, str_from("nginx"));
     assert_eq(vec_len(results), 1, "icase search finds Nginx-Core");
     var results2 = pkg_db_search(db, str_from("NGINX"));
@@ -478,9 +479,9 @@ fn test_security() {
     # H1: pkg_db_save serializes actual data
     var db2 = pkg_db_new();
     pkg_db_register(db2, make_test_entry(
-        str_from("test-pkg"), str_from("2.0"), SOURCE_SYSTEM, 512, vec_new()));
+    str_from("test-pkg"), str_from("2.0"), SOURCE_SYSTEM, 512, vec_new()));
     pkg_db_register(db2, make_test_entry(
-        str_from("other-pkg"), str_from("3.0"), SOURCE_MARKETPLACE, 256, vec_new()));
+    str_from("other-pkg"), str_from("3.0"), SOURCE_MARKETPLACE, 256, vec_new()));
     # Verify list returns both
     assert_eq(vec_len(pkg_db_list(db2)), 2, "db has 2 entries before save");
 
@@ -499,7 +500,7 @@ fn test_security() {
     var db3 = pkg_db_new();
     # Package with no file manifest
     pkg_db_register(db3, make_test_entry(
-        str_from("empty-pkg"), str_from("1.0"), SOURCE_SYSTEM, 100, vec_new()));
+    str_from("empty-pkg"), str_from("1.0"), SOURCE_SYSTEM, 100, vec_new()));
     var iss1 = pkg_db_check_integrity_full(db3, str_from(""));
     assert_eq(vec_len(iss1), 1, "full: no manifest");
     assert_eq(iissue_type(vec_get(iss1, 0)), ISSUE_NO_MANIFEST, "issue type no manifest");
@@ -508,7 +509,7 @@ fn test_security() {
     var fmiss = vec_new();
     vec_push(fmiss, str_from("/nonexistent/file/xyz"));
     var miss_entry = make_test_entry(
-        str_from("miss-pkg"), str_from("1.0"), SOURCE_SYSTEM, 100, fmiss);
+    str_from("miss-pkg"), str_from("1.0"), SOURCE_SYSTEM, 100, fmiss);
     store64(miss_entry + 48, str_from("abc123"));
     pkg_db_register(db3, miss_entry);
     var iss2 = pkg_db_check_integrity_full(db3, str_from("miss-pkg"));
@@ -526,7 +527,7 @@ fn test_security() {
     var pfc_files = vec_new();
     vec_push(pfc_files, str_from("/tmp/ark-test-pfc"));
     var pfc_entry = make_test_entry(
-        str_from("pfc-pkg"), str_from("1.0"), SOURCE_SYSTEM, 100, pfc_files);
+    str_from("pfc-pkg"), str_from("1.0"), SOURCE_SYSTEM, 100, pfc_files);
     pdbe_set_file_hash(pfc_entry, str_from("/tmp/ark-test-pfc"), str_from("abc123"));
     var got_hash = pdbe_get_file_hash(pfc_entry, str_from("/tmp/ark-test-pfc"));
     assert(got_hash > 0, "per-file hash stored");
@@ -551,7 +552,7 @@ fn test_security() {
 
     # PackageDbEntry signing round-trip
     var sign_entry = make_test_entry(
-        str_from("signed-pkg"), str_from("2.0"), SOURCE_MARKETPLACE, 512, vec_new());
+    str_from("signed-pkg"), str_from("2.0"), SOURCE_MARKETPLACE, 512, vec_new());
     assert_eq(str_len(pdbe_signature(sign_entry)), 0, "unsigned initially");
     # Can't verify unsigned
     assert_eq(pdbe_verify(sign_entry, pk), 0, "unsigned verify = 0");
@@ -714,12 +715,76 @@ fn test_exec() {
     assert_eq(ares_success(rempty), 1, "empty plan ok");
     assert(str_contains(ares_message(rempty), str_from("Nothing to do")), "empty plan msg");
 
-    # --- not-wired step fails the whole plan ---
+    # --- M1: a marketplace step routes to ark's native installer (no longer a
+    # "not wired" dead-end). Dry-run renders it as a native install. ---
     var plan2 = install_plan_new();
     vec_push(iplan_steps(plan2), step_marketplace_install(str_from("my-agent"), str_from("1.0")));
     var rnw = exec_plan(mgr, plan2, 1);
-    assert_eq(ares_success(rnw), 0, "not-wired fails plan");
-    assert(str_contains(ares_message(rnw), str_from("not yet wired")), "not-wired msg");
+    assert_eq(ares_success(rnw), 1, "marketplace step dry-run ok (native route)");
+    assert(str_contains(ares_message(rnw), str_from("(native) install my-agent")), "native install rendered");
+}
+
+# M0 — system_backend seam (ADR 0002): apt / apt-agnos / native lowering.
+fn test_system_backend() {
+    test_group("system_backend");
+
+    # --- config field: default + accessors ---
+    var cfg = ark_config_default();
+    assert_eq(acfg_system_backend(cfg), BACKEND_APT, "default backend = apt");
+    assert(str_eq_cstr(acfg_apt_wrapper(cfg), DEFAULT_APT_WRAPPER), "default apt_wrapper");
+    acfg_set_system_backend(cfg, BACKEND_NATIVE);
+    assert_eq(acfg_system_backend(cfg), BACKEND_NATIVE, "set/get backend");
+    acfg_set_apt_wrapper(cfg, str_from("/opt/agnos/aw"));
+    assert(str_eq_cstr(acfg_apt_wrapper(cfg), "/opt/agnos/aw"), "set/get apt_wrapper");
+
+    # --- name <-> enum ---
+    assert(streq(backend_to_str(BACKEND_APT), "apt"), "backend_to_str apt");
+    assert(streq(backend_to_str(BACKEND_APT_AGNOS), "apt-agnos"), "backend_to_str apt-agnos");
+    assert(streq(backend_to_str(BACKEND_NATIVE), "native"), "backend_to_str native");
+    assert_eq(result_unwrap(parse_backend_str("apt")), BACKEND_APT, "parse apt");
+    assert_eq(result_unwrap(parse_backend_str("apt-agnos")), BACKEND_APT_AGNOS, "parse apt-agnos");
+    assert_eq(result_unwrap(parse_backend_str("native")), BACKEND_NATIVE, "parse native");
+    assert_eq(is_ok(parse_backend_str("bogus")), 0, "parse unknown -> err");
+
+    # --- apt backend: byte-identical to the default 1-arg lowering ---
+    var inst = step_system_install(str_from("nginx"), str_from(""));
+    var apt = step_to_argv_be(inst, BACKEND_APT, str_from("apt-agnos"));
+    assert_eq(vec_len(apt), 4, "apt argv len 4");
+    assert(str_eq(vec_get(apt, 0), str_from("apt-get")), "apt argv[0] apt-get");
+    assert(str_eq(exec_argv_to_str(step_to_argv(inst)), exec_argv_to_str(apt)), "1-arg == apt backend");
+
+    # --- apt-agnos: wrapper-fronted apt-get (ADR 0002) ---
+    var wa = step_to_argv_be(inst, BACKEND_APT_AGNOS, str_from("apt-agnos"));
+    assert_eq(vec_len(wa), 5, "apt-agnos argv len 5 (wrapper + 4)");
+    assert(str_eq(vec_get(wa, 0), str_from("apt-agnos")), "apt-agnos argv[0] wrapper");
+    assert(str_eq(vec_get(wa, 1), str_from("apt-get")), "apt-agnos argv[1] apt-get");
+    assert(str_eq(exec_argv_to_str(wa), str_from("apt-agnos apt-get install -y nginx")), "apt-agnos render");
+    var wu = step_to_argv_be(step_system_update(), BACKEND_APT_AGNOS, str_from("apt-agnos"));
+    assert(str_eq(vec_get(wu, 0), str_from("apt-agnos")), "apt-agnos update fronted");
+
+    # --- native: system steps route to ark's installer (no shell argv) ---
+    assert_eq(step_to_argv_be(inst, BACKEND_NATIVE, str_from("apt-agnos")), 0, "native install -> 0");
+    assert_eq(step_to_argv_be(step_system_remove(str_from("x"), 0), BACKEND_NATIVE, str_from("apt-agnos")), 0, "native remove -> 0");
+    assert_eq(step_to_argv_be(step_system_update(), BACKEND_NATIVE, str_from("apt-agnos")), 0, "native update -> 0");
+
+    # --- backend-independent paths: flutter unaffected by the backend ---
+    var fa = step_to_argv_be(step_flutter_install(str_from("app"), str_from("")), BACKEND_NATIVE, str_from("apt-agnos"));
+    assert(str_eq(vec_get(fa, 0), str_from("agpkg")), "flutter unaffected by native backend");
+    var fa2 = step_to_argv_be(step_flutter_install(str_from("app"), str_from("")), BACKEND_APT_AGNOS, str_from("apt-agnos"));
+    assert(str_eq(vec_get(fa2, 0), str_from("agpkg")), "flutter not fronted by apt-agnos");
+
+    # --- exec_plan honors the configured backend (dry-run, shakti-wrapped) ---
+    var cfg2 = ark_config_default();
+    store64(cfg2 + 40, str_from("/tmp/ark-test-mkt"));
+    store64(cfg2 + 48, str_from("/tmp/ark-test-cache"));
+    acfg_set_system_backend(cfg2, BACKEND_APT_AGNOS);
+    var mgr2 = ark_mgr_new(cfg2);
+    var plan = install_plan_new();
+    vec_push(iplan_steps(plan), step_system_install(str_from("nginx"), str_from("")));
+    iplan_set_root(plan, 1);
+    var rd = exec_plan(mgr2, plan, 1);
+    assert_eq(ares_success(rd), 1, "apt-agnos dry run ok");
+    assert(str_contains(ares_message(rd), str_from("shakti -- apt-agnos apt-get install -y nginx")), "dry run wrapper-fronted under shakti");
 }
 
 fn test_ark_package() {
@@ -737,7 +802,7 @@ fn test_ark_package() {
     assert_eq(apkg_man_build_date(m), 1700000000, "manifest build_date");
     # description exercises TOML escape/unescape (embedded quote + newline)
     assert(str_eq_cstr(str_from("needs \"quotes\" and\na newline"),
-                       apkg_man_description(m)), "description unescaped losslessly");
+    apkg_man_description(m)), "description unescaped losslessly");
     # groups / depends arrays
     assert_eq(vec_len(apkg_man_groups(m)), 2, "groups count");
     assert(str_eq_cstr(str_from("base"), vec_get(apkg_man_groups(m), 0)), "groups[0]");
@@ -796,7 +861,7 @@ fn test_ark_install() {
     var mgr = ark_mgr_new(cfg);
 
     var res = ark_pkg_install(mgr, "tests/fixtures/sample-signed.ark",
-                              "/tmp/ark-inst-root", 1048576);
+    "/tmp/ark-inst-root", 1048576);
     assert_eq(ares_success(res), 1, "install succeeds");
     assert(str_contains(ares_message(res), str_from("Installed myapp 2.1.0")), "install message");
 
@@ -856,7 +921,7 @@ fn test_marketplace() {
 
     # cache-path uses mela's sanitize_filename: <cache>/<name>-<version>.ark
     var cp = ark_marketplace_cache_path(str_from("/tmp/ark-mkt-cache"),
-                                        str_from("myapp"), str_from("2.1.0"));
+    str_from("myapp"), str_from("2.1.0"));
     assert(str_contains(cp, str_from("myapp-2_1_0.ark")), "cache path built (sanitized)");
 
     # Marketplace forces require_signed, so provision a trust set with the
@@ -876,14 +941,14 @@ fn test_marketplace() {
     # runs fully offline (no network) through the mela download path.
     apkg_mkdir_p(str_data(str_from("/tmp/ark-mkt-cache")));
     var dst = str_data(ark_marketplace_cache_path(str_from("/tmp/ark-mkt-cache"),
-                                                  str_from("myapp"), str_from("2.1.0")));
+    str_from("myapp"), str_from("2.1.0")));
     var fb = alloc(4096);
     var fn2 = file_read_all("tests/fixtures/sample-signed.ark", fb, 4096);
     file_write_all(dst, fb, fn2);
     var res = ark_marketplace_install(mgr, str_from("https://example.invalid/"),
-                                      str_from("/tmp/ark-mkt-cache"),
-                                      str_from("myapp"), str_from("2.1.0"),
-                                      str_from("/tmp/ark-mkt-root"), 1048576);
+    str_from("/tmp/ark-mkt-cache"),
+    str_from("myapp"), str_from("2.1.0"),
+    str_from("/tmp/ark-mkt-root"), 1048576);
     assert_eq(ares_success(res), 1, "cache-hit marketplace install (trusted signer) succeeds");
     assert(file_exists("/tmp/ark-mkt-root/usr/bin/app"), "marketplace install materialized file");
     assert(pkg_db_is_installed(amgr_db(mgr), str_from("myapp")), "registered in db");
@@ -896,22 +961,168 @@ fn test_marketplace() {
     acfg_set_trust_keys(cfgu, str_from("/tmp/ark-mkt-trust-absent"));
     var mgru = ark_mgr_new(cfgu);
     var rej = ark_marketplace_install(mgru, str_from("https://example.invalid/"),
-                                      str_from("/tmp/ark-mkt-cache"),
-                                      str_from("myapp"), str_from("2.1.0"),
-                                      str_from("/tmp/ark-mkt-rootu"), 1048576);
+    str_from("/tmp/ark-mkt-cache"),
+    str_from("myapp"), str_from("2.1.0"),
+    str_from("/tmp/ark-mkt-rootu"), 1048576);
     assert_eq(ares_success(rej), 0, "marketplace install w/ untrusted signer refused");
 
     # Invalid version segment is rejected by mela's validator.
     var bad = ark_marketplace_install(mgr, str_from("https://example.invalid/"),
-                                      str_from("/tmp/ark-mkt-cache"),
-                                      str_from("myapp"), str_from("../etc/passwd"),
-                                      str_from("/tmp/ark-mkt-root"), 1048576);
+    str_from("/tmp/ark-mkt-cache"),
+    str_from("myapp"), str_from("../etc/passwd"),
+    str_from("/tmp/ark-mkt-root"), 1048576);
     assert_eq(ares_success(bad), 0, "invalid version rejected");
 
-    # name@version arg parsing requires the '@'.
+    # M1: no '@version' triggers resolve-"latest" via the mela manifest endpoint.
+    # Offline (host .invalid never resolves), so it fails closed with a clear msg.
     var noat = ark_marketplace_install_arg(mgr, str_from("https://example.invalid/"),
-                                           str_from("myapp"), str_from(""));
-    assert_eq(ares_success(noat), 0, "missing @version rejected");
+    str_from("myapp"), str_from(""));
+    assert_eq(ares_success(noat), 0, "resolve-latest fails closed when offline");
+    assert(str_contains(ares_message(noat), str_from("resolve latest")), "resolve-latest offline msg");
+
+    # A leading '@' (no name) is still malformed.
+    var bad_at = ark_marketplace_install_arg(mgr, str_from("https://example.invalid/"),
+    str_from("@2.0"), str_from(""));
+    assert_eq(ares_success(bad_at), 0, "leading @ malformed");
+}
+
+# M1 — a resolved marketplace step installs from a LOCAL `.ark` via the
+# executor (exec_plan --apply), recorded in a reversible transaction, then
+# rolls back natively (no apt). This is the M1 acceptance path.
+fn test_native_apply() {
+    test_group("native_apply");
+
+    var cfg = ark_config_default();
+    store64(cfg + 40, str_from("/tmp/ark-m1-mkt"));
+    store64(cfg + 48, str_from("/tmp/ark-m1-cache"));    # cache_dir
+    store64(cfg + 56, str_from("/tmp/ark-m1-db.json"));  # package_db_path
+    store64(cfg + 64, str_from("/tmp/ark-m1-txn.log"));  # transaction_log_path
+    acfg_set_native_root(cfg, str_from("/tmp/ark-m1-root"));
+    var mgr = ark_mgr_new(cfg);
+
+    # Stage the signed fixture at the cache path the executor resolves to.
+    apkg_mkdir_p(str_data(str_from("/tmp/ark-m1-cache")));
+    var dst = str_data(ark_marketplace_cache_path(str_from("/tmp/ark-m1-cache"),
+    str_from("myapp"), str_from("2.1.0")));
+    var fb = alloc(4096);
+    var nb = file_read_all("tests/fixtures/sample-signed.ark", fb, 4096);
+    file_write_all(dst, fb, nb);
+
+    # Apply a plan with a resolved marketplace step — no apt, no network.
+    var plan = install_plan_new();
+    vec_push(iplan_steps(plan), step_marketplace_install(str_from("myapp"), str_from("2.1.0")));
+    var res = exec_plan(mgr, plan, 0);
+    assert_eq(ares_success(res), 1, "native apply via executor succeeds");
+    assert(file_exists("/tmp/ark-m1-root/usr/bin/app"), "executor materialized file under native_root");
+    assert(pkg_db_is_installed(amgr_db(mgr), str_from("myapp")), "executor registered package in store");
+
+    # The apply recorded a committed, reversible transaction.
+    var recent = txn_log_recent(amgr_log(mgr), 5);
+    assert(vec_len(recent) > 0, "install transaction recorded");
+
+    # Roll back natively: source-aware reverse -> marketplace remove (not apt).
+    acfg_set_apply(cfg, APPLY_REAL);
+    var rb = ark_rollback(mgr, str_from(""));
+    assert_eq(ares_success(rb), 1, "native rollback succeeds");
+    assert_eq(pkg_db_is_installed(amgr_db(mgr), str_from("myapp")), 0, "rollback unregistered package");
+    assert_eq(file_exists("/tmp/ark-m1-root/usr/bin/app"), 0, "rollback unlinked materialized file");
+}
+
+# M2 — under BACKEND_NATIVE, a SOURCE_SYSTEM step installs from ark's local
+# `.ark` store into the authoritative PackageDb — zero apt, zero network. This
+# is the agnos default and ark's share of M2 (the SOURCE_NATIVE *resolver* is
+# the nous producer gate; ark consumes it the moment nous ships it).
+fn test_native_backend() {
+    test_group("native_backend");
+
+    var cfg = ark_config_default();
+    store64(cfg + 48, str_from("/tmp/ark-m2-cache"));
+    store64(cfg + 56, str_from("/tmp/ark-m2-db.json"));
+    store64(cfg + 64, str_from("/tmp/ark-m2-txn.log"));
+    acfg_set_native_root(cfg, str_from("/tmp/ark-m2-root"));
+    acfg_set_system_backend(cfg, BACKEND_NATIVE);
+    var mgr = ark_mgr_new(cfg);
+
+    # Stage the `.ark` in the local store under the system package's name/version.
+    apkg_mkdir_p(str_data(str_from("/tmp/ark-m2-cache")));
+    var dst = str_data(ark_marketplace_cache_path(str_from("/tmp/ark-m2-cache"),
+    str_from("myapp"), str_from("2.1.0")));
+    var fb = alloc(4096);
+    var nb = file_read_all("tests/fixtures/sample-signed.ark", fb, 4096);
+    file_write_all(dst, fb, nb);
+
+    # A SOURCE_SYSTEM install step (what nous emits for the system source) lowers
+    # to NO apt argv under native — the executor installs it from the store.
+    assert_eq(step_to_argv_be(step_system_install(str_from("myapp"), str_from("2.1.0")),
+    BACKEND_NATIVE, str_from("apt-agnos")), 0, "native: system step has no apt argv");
+    var plan = install_plan_new();
+    vec_push(iplan_steps(plan), step_system_install(str_from("myapp"), str_from("2.1.0")));
+    var res = exec_plan(mgr, plan, 0);
+    assert_eq(ares_success(res), 1, "native system install via store succeeds (no apt)");
+    assert(pkg_db_is_installed(amgr_db(mgr), str_from("myapp")), "native system install registered in store");
+    assert(file_exists("/tmp/ark-m2-root/usr/bin/app"), "native system install materialized");
+    # The store is authoritative — ark never shells dpkg-query for this.
+    assert_eq(pkg_db_count(amgr_db(mgr)), 1, "PackageDb is the authoritative installed-set");
+    # Review fix #1: a native SYSTEM install records SOURCE_SYSTEM, not marketplace.
+    var ie = pkg_db_get(amgr_db(mgr), "myapp");
+    assert(ie != 0, "entry present");
+    assert_eq(pdbe_source(ie), SOURCE_SYSTEM, "native system install tagged SOURCE_SYSTEM");
+    # Review fix #2: install durably WRITES the store to disk (the file is
+    # created and serializes the package + its source). NOTE: reconstructing
+    # entries on load is a separate pre-existing gap (pkg_db_load reads only
+    # schema_version; the bundled DOM JSON parser is unavailable in-build) —
+    # tracked as a follow-up, so full cross-process reload is not yet asserted.
+    assert(file_exists("/tmp/ark-m2-db.json"), "store written to disk on install");
+    var rdb = alloc(4096);
+    var rdn = file_read_all("/tmp/ark-m2-db.json", rdb, 4096);
+    assert(rdn > 0, "store file non-empty");
+    var rdc = str_new(rdb, rdn);
+    assert(str_contains(rdc, str_from("myapp")), "persisted store names the installed package");
+    assert(str_contains(rdc, str_from("\"source\":0")), "persisted with SOURCE_SYSTEM (review fix #1)");
+}
+
+# Review fix #3 — rollback reverses each op via its OWN source backend, so a
+# flutter install rolls back via agpkg, never apt.
+fn test_rollback_sources() {
+    test_group("rollback_sources");
+
+    var cfg = ark_config_default();
+    store64(cfg + 56, str_from("/tmp/ark-rbs-db.json"));
+    store64(cfg + 64, str_from("/tmp/ark-rbs-txn.log"));
+    acfg_set_apply(cfg, APPLY_DRY);
+    var mgr = ark_mgr_new(cfg);
+
+    # Record a committed flutter install transaction directly.
+    var log = amgr_log(mgr);
+    var tid = txn_log_begin(log, str_from("t"));
+    txn_log_add_op(log, tid, txn_op_new(OP_INSTALL, str_from("myapp"), str_from("1.0"), SOURCE_FLUTTER_APP));
+    txn_log_mark_op_complete(log, tid, str_from("myapp"));
+    txn_log_commit(log, tid);
+
+    # Rollback (dry-run) must reverse via agpkg (flutter), not apt-get.
+    var rb = ark_rollback(mgr, str_from(""));
+    assert_eq(ares_success(rb), 1, "flutter rollback dry-run ok");
+    assert(str_contains(ares_message(rb), str_from("agpkg remove myapp")), "flutter install rolls back via agpkg");
+    assert_eq(str_contains(ares_message(rb), str_from("apt-get")), 0, "flutter rollback does not use apt");
+}
+
+# M3 — portable syscall shims (host behavior; agnos Sys numbers resolve at build).
+fn test_portable() {
+    test_group("portable");
+
+    # Wall-clock seconds since the epoch (> 2020-01-01) — replaces raw time(201).
+    assert(ark_now_secs() > 1577836800, "ark_now_secs returns a real epoch");
+
+    # Atomic rename + unlink over the portable shims (host SYS_RENAME/UNLINK).
+    ark_unlink("/tmp/ark-port-src");
+    ark_unlink("/tmp/ark-port-dst");
+    file_write_all("/tmp/ark-port-src", str_data(str_from("hi")), 2);
+    assert(file_exists("/tmp/ark-port-src"), "src staged");
+    ark_rename("/tmp/ark-port-src", "/tmp/ark-port-dst");
+    assert_eq(file_exists("/tmp/ark-port-src"), 0, "src gone after rename");
+    assert(file_exists("/tmp/ark-port-dst"), "dst present after rename");
+    ark_unlink("/tmp/ark-port-dst");
+    assert_eq(file_exists("/tmp/ark-port-dst"), 0, "unlink removed file");
 }
 
 fn test_nous_integration() {
@@ -1035,10 +1246,15 @@ fn test_main() {
     test_recipes();
     test_manager();
     test_exec();
+    test_system_backend();
     test_ark_package();
     test_ark_install();
     test_ark_install_cli();
     test_marketplace();
+    test_native_apply();
+    test_native_backend();
+    test_rollback_sources();
+    test_portable();
     test_nous_integration();
     test_pkg_security();
     return assert_summary();

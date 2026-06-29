@@ -2,10 +2,16 @@
 # Three tiers: [tier1] construct/format · [tier2] package-db · [tier3] transaction/output
 
 include "src/types.cyr"
+include "src/portable.cyr"
 include "src/output.cyr"
 include "src/transaction.cyr"
 include "src/db.cyr"
 include "src/engine.cyr"
+include "src/exec.cyr"
+include "src/recipe.cyr"
+include "src/ark_package.cyr"
+include "src/marketplace.cyr"
+include "src/bazaar.cyr"
 include "src/cli.cyr"
 
 fn now_us() {

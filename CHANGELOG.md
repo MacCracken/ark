@@ -5,6 +5,113 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.1.0] - 2026-06-29 — AGNOS compatibility: the host-side AGNOS track (M0–M3)
+
+Brings up ark's share of the 1.1.x AGNOS track end to end on the host — the
+system-backend seam (M0), the native `.ark` installer wired into the executor
+(M1), the native backend + authoritative store (M2 ark-share), and syscall
+portability so the agnos cross-build compiles (M3) — and moves the toolchain to
+**cyrius 6.3.5**. The remaining AGNOS-track work (the nous `SOURCE_NATIVE`
+resolver, on-hardware QEMU validation, M4) stays future; the 1.0.x
+marketplace/UX enhancement arc is pushed back behind this release.
+
+### Added
+
+- **System-backend seam (M0, ADR 0002).** `ArkConfig.system_backend` selects
+  `apt` / `apt-agnos` / `native`; `exec.cyr`'s new `step_to_argv_be(step,
+  backend, wrapper)` lowers each step accordingly — `apt-agnos` **wrapper-fronts**
+  `apt-get` with a configurable `apt_wrapper`, `native` routes `SOURCE_SYSTEM`
+  steps to ark's own installer. The mode decides the *inner* command; shakti
+  still escalates. New `--system-backend <mode>` CLI flag and `system_backend` /
+  `apt_wrapper` TOML keys. The 1-arg `step_to_argv` is retained as an apt-default
+  convenience, so existing call sites and tests are byte-identical.
+- **Native installer wired into the executor (M1).** `exec_plan` now routes
+  marketplace/community (and native system) steps to ark's `.ark`
+  installer/remover (`exec_native_step`) instead of the old "not yet wired"
+  dead-end. A resolved plan installs from a **local `.ark` via `--apply`**,
+  recorded in the **plan-wide transaction** so `ark_rollback` reverses it. New
+  `ark_pkg_remove_inner` (store-driven native remove: unregister + unlink).
+- **Resolve-"latest" (M1).** `ark install name --marketplace URL` with no
+  `@version` resolves the concrete version from mela's manifest endpoint
+  (`ark_marketplace_resolve_latest`, composing `build_latest_url` →
+  `manifest_from_json` → `man_version`; mela 1.0.0, no new dependency).
+- **Native backend + authoritative store (M2, ark's share).** Under
+  `BACKEND_NATIVE`, `SOURCE_SYSTEM` packages install from ark's local `.ark`
+  store into the **`PackageDb` — the authoritative installed set (ark never
+  shells `dpkg-query`)**. The default flips to `native` on agnos
+  (`#ifdef CYRIUS_TARGET_AGNOS`). The nous `SOURCE_NATIVE` resolver + signed
+  index + lockfile are a producer gate (see Notes).
+- **Syscall portability layer (M3, ADR 0003).** New `src/portable.cyr` with
+  `#ifdef`-guarded shims — `ark_now_secs` / `ark_fsync` / `ark_rename` /
+  `ark_unlink` / `ark_symlink` — so each operation resolves to the correct Sys
+  number per target. The **agnos cross-build (`cyrius build --agnos`) now
+  compiles**; it previously failed on the undefined `sys_symlink`.
+- **+45 tests (292 → 337):** `system_backend` (M0), `native_apply` + resolve-
+  latest (M1), `native_backend` (M2), `portable` (M3); host and agnos builds,
+  bench, and fuzz all green.
+
+### Changed
+
+- **Toolchain pin `6.2.21` → `6.3.5`** (`.cyrius-toolchain`, `cyrius.cyml`):
+  stdlib re-synced (picks up the arena-aware `tls_accept_*` sandhi needs), deps
+  re-resolved. 6.3.5 promotes reachable-undefined functions to a hard error —
+  the bench and fuzz harnesses were updated to include the source files defining
+  the `cli.cyr` symbols they reference, and 3 files were re-formatted for the
+  6.3.5 continuation-line rule.
+- **`ark_rollback` is now source-aware.** A reversed op uses the original op's
+  source — a native/marketplace install rolls back through the native remover
+  (not `apt`) and at the recorded version — instead of always emitting system
+  (apt) steps.
+- **`ArkConfig` grew** (`ACFG_SZ` 104 → 128): `system_backend`, `apt_wrapper`,
+  and `native_root` (the executor's staging root for native installs, `""` =
+  real root). Internal struct only — there is no serialized config format.
+
+### Fixed
+
+- **`confirm()` stack over-read** (`cli.cyr`) — it read 128 bytes into a
+  16-byte stack buffer; capped the read at the buffer size (only the first
+  reply character is used).
+- **De-magic'd syscall literals** — the Linux-host raw numbers (`time 201`,
+  `fsync 74`, `rename 82`, `O_WRONLY|O_CREAT|O_EXCL 193`) now go through the
+  portable shims / named flags, so they invoke the right syscall on agnos
+  instead of a wrong-numbered one.
+- **Adversarial-review fixes** (found verifying the M0–M3 diff):
+  - **Source attribution** — a native `SOURCE_SYSTEM` install no longer
+    registers in `PackageDb` as `SOURCE_MARKETPLACE`; the installer takes the
+    source from the step/caller (`ark_pkg_install_inner(..., source)`).
+  - **Durable store writes** — install/remove now `pkg_db_save` after the
+    register/unregister (previously only pin/hold persisted), and the secure
+    temp write uses portable `file_open`/`file_write`/`file_close` (so the
+    earlier M3 portability claim holds on the open path too, not just fsync/rename).
+  - **Rollback covers every source** — flutter installs roll back via `agpkg`
+    (not `apt`); and a remove records the installed version so a rollback-of-
+    remove reinstalls at the right version instead of an empty-version cache miss.
+  - **CLI/validation** — an invalid `--system-backend` value now errors (was
+    silently ignored); resolve-"latest" validates the package name before it is
+    concatenated into the manifest URL.
+
+### Notes
+
+- **Producer gate (nous).** M2's resolver half is **not** ark's to ship: nous
+  1.2.7 (HEAD == 1.2.7, verified per-tag) has no `SOURCE_NATIVE`, no signed
+  native index, and no lockfile. ark is the wired-and-ready consumer; the
+  acceptance "apt absent → nous resolves a name to `SOURCE_NATIVE`" is
+  unattainable until nous ships it (and the store stays empty until takumi
+  builds a real zugot recipe → `.ark` and indexes it).
+- **Deferred (M3, compiling ≠ working).** On-agnos QEMU+iron runtime validation
+  is the remaining M3 acceptance gate. agnos has no `fsync` (durability is a
+  no-op there) and no `symlink` syscall (filed agnos 1.51.x) — a `.ark` carrying
+  a symlink entry is rejected on agnos until it lands; scope agnos fixtures to
+  symlink-free.
+- **Pre-existing gap discovered: `PackageDb` does not reload from disk.**
+  `pkg_db_save` writes correct JSON, but `pkg_db_load` only reads
+  `schema_version` and never reconstructs the `packages` object — so the
+  installed-set does not survive across CLI processes. This predates 1.1.0 (it
+  affected pin/hold persistence too) and is **not** introduced here; install/
+  remove now at least write the store durably. The fix needs a working object
+  parser (the bundled DOM JSON parser, `json_v_parse`, returns 0 in-build; only
+  the flat key→string parser works) — tracked as a roadmap follow-up.
+
 ## [1.0.0] - 2026-06-18 — Cyrius port complete
 
 ark's first stable release. The full package manager is in Cyrius, end to end:

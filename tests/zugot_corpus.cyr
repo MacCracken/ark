@@ -11,6 +11,7 @@
 # readdir wrapper in stdlib yet). Exits non-zero if any recipe fails to parse.
 
 include "src/types.cyr"
+include "src/portable.cyr"
 include "src/output.cyr"
 include "src/transaction.cyr"
 include "src/db.cyr"

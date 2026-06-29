@@ -167,6 +167,25 @@ trust-anchored signing.
 - [x] Quality-gated (0.9.0) + security-hardened (0.9.1); docs/README reconciled to the shipped surface
 - Deferred: marketplace enhancements + progress UI (post-1.0); AGNOS native/apply track (1.1.x)
 
+### v1.1.0 (2026-06-29) — AGNOS compatibility: the host-side AGNOS track (M0–M3)
+
+Brings up ark's share of the 1.1.x AGNOS track end to end on the host: the
+ADR-0002 **system-backend seam** (M0), the **native `.ark` installer wired into
+the executor** (M1), the **native backend + authoritative store** (M2 ark-share),
+and **syscall portability** so the agnos cross-build compiles (M3). Toolchain
+moved to **cyrius 6.3.5**. The remaining AGNOS-track work (M4+, the nous
+`SOURCE_NATIVE` resolver, on-hardware QEMU validation) stays future — see below.
+The **1.0.x marketplace/UX enhancement arc is pushed back behind 1.1.0** (still
+planned, not dropped).
+
+- [x] **Toolchain → cyrius 6.3.5** (pin `6.2.21` → `6.3.5`): stdlib re-sync (picks up arena-aware `tls_accept_*` for sandhi), deps re-resolved. 6.3.5 hardened reachable-undefined into an error — fixed the bench + fuzz harness include sets (they referenced `cli.cyr` symbols defined in non-included files) and the continuation-line fmt drift on 3 files.
+- [x] **M0 — `system_backend` seam (ADR 0002).** `ArkConfig.system_backend` (`apt`/`apt-agnos`/`native`) + configurable `apt_wrapper`, threaded into `exec.cyr` `step_to_argv_be(step, backend, wrapper)`; `exec_plan` honors it. `--system-backend` CLI flag + `system_backend`/`apt_wrapper` TOML keys. Acceptance met: **apt mode byte-identical** (1-arg `step_to_argv` retained), full suite green, **`apt-agnos` wrapper-fronts apt-get**, **`native` selectable**.
+- [x] **M1 — resolved steps → native `.ark` installer.** `exec_plan` routes marketplace/community (and native system) steps to ark's installer instead of failing loud; install/remove cores (`ark_pkg_install_inner` / `ark_pkg_remove_inner`) record the op in the **plan-wide transaction** so rollback reverses it; `ark_rollback` is now **source-aware** (native installs roll back via the native remover, not apt). Resolve-**"latest"** composed from mela's `build_latest_url`→`manifest_from_json`→`man_version` (mela 1.0.0, no new dep). Acceptance met: a plan installs from a **local `.ark` via `--apply`, rollback-able, no apt** (`test_native_apply`).
+- [x] **M2 — native backend + authoritative store (ark's share).** Under `BACKEND_NATIVE`, `SOURCE_SYSTEM` steps install from ark's local `.ark` store into the **`PackageDb` (authoritative — ark never shells `dpkg-query`)**; default flips to `native` on agnos (`#ifdef CYRIUS_TARGET_AGNOS`). Acceptance met for ark's share (`test_native_backend`). **Producer gate (nous):** there is no `SOURCE_NATIVE` resolver / signed native index / lockfile in nous 1.2.7 (HEAD == 1.2.7, verified per-tag) — ark is the wired-and-ready *consumer*; the resolver half lands when nous ships it.
+- [x] **M3 — syscall portability triage.** New `src/portable.cyr` `#ifdef`-guarded shims (`ark_now_secs`/`ark_fsync`/`ark_rename`/`ark_unlink`/`ark_symlink`) replace the Linux-host raw literals (`time 201`, `fsync 74`, `rename 82`, `O_* 193`) and the agnos-absent `sys_symlink`/4-arg ABIs; `confirm()` 128-byte over-read into a 16-byte buffer fixed. Acceptance (host-side, **compiling ≠ working**): the **agnos cross-build now compiles** (`cyrius build --agnos`; previously failed on undefined `sys_symlink`) and the host path stays **byte-identical** (337 tests green). **Deferred:** on-agnos QEMU+iron runtime validation; symlink-bearing `.ark` is rejected on agnos until the symlink syscall lands (agnos 1.51.x).
+- [x] 346 tests (+54: M0 +26, M1 +9, M2 +8, M3 +5, review-fix regressions +6), bench + fuzz green; host **and** agnos builds clean. Adversarially reviewed; 7 correctness findings fixed (source attribution, durable saves, full-source rollback, version-carrying remove, portable open, CLI/validation).
+- [ ] **Follow-up (pre-existing, discovered in review): `PackageDb` does not reload from disk.** `pkg_db_save` writes correct JSON but `pkg_db_load` never reconstructs the `packages` object (reads only `schema_version`), so the installed-set doesn't survive across CLI processes. Predates 1.1.0 (affected pin/hold too). Blocked on a working object parser — the bundled DOM parser `json_v_parse` returns 0 in-build; only the flat key→string parser works. Needed before the native store is truly authoritative across processes / on-agnos.
+
 ### Capability inventory (verified against code 2026-06-16)
 
 These were on the backlog but are implemented and tested in the tree today:
@@ -185,33 +204,39 @@ These were on the backlog but are implemented and tested in the tree today:
 - [x] Privilege-aware config loading — skips user-writable configs when `euid == 0` (`src/cli.cyr`)
 - [x] Bazaar local catalog browse — `bazaar_db_load` / search / list-by-category (`src/bazaar.cyr`); download/verify still open
 
-## Post-1.0: 1.0.x — marketplace & UX enhancements
+## Deferred behind 1.1.0: 1.x — marketplace & UX enhancements
+
+> **Pushed back (2026-06-29):** this marketplace/UX enhancement arc is deferred
+> behind the 1.1.0 AGNOS-compatibility work (M0–M3). Still planned, not dropped —
+> it resumes after the AGNOS track settles. (Two of its items were absorbed by
+> M1: resolve-"latest" and wiring resolved steps to the native installer.)
 
 Non-blocking enhancements layered on the shipped 1.0 core (resolve → plan →
 execute, `.ark` read/verify/install, trust-anchored marketplace download — see
-Completed). Sequenced as a 1.0.x arc; group sizes are a guide, not a contract.
+Completed). Group sizes are a guide, not a contract.
 
-### 1.0.1 — marketplace resolution UX
-- [ ] Resolve "latest" (no explicit version) via mela's manifest/latest endpoints
-- [ ] Wire `STEP_MARKETPLACE_INSTALL` (resolved packages) to the marketplace installer, so `ark install <name>` (no `--marketplace` URL) uses a configured marketplace
+### marketplace resolution UX
+- [x] Resolve "latest" (no explicit version) via mela's manifest/latest endpoints — **shipped in 1.1.0 (M1)** (`ark_marketplace_resolve_latest`)
+- [x] Wire `STEP_MARKETPLACE_INSTALL` (resolved packages) to the installer, so a resolved plan installs from local `.ark` without a `--marketplace` URL — **shipped in 1.1.0 (M1)** (`exec_native_step`). *(Still open: auto-**download** for a resolved-but-uncached package from a configured default marketplace.)*
 
-### 1.0.2 — supply-chain trust depth
+### supply-chain trust depth
 - [ ] Verify the artifact against mela's **transparency log** (beyond the trusted-signer check)
 - [ ] Typosquatting detection (Levenshtein distance) on resolution
 
-### 1.0.3 — distribution breadth
+### distribution breadth
 - [ ] Mirror support (fall over between configured marketplace mirrors)
 - [ ] Bazaar install path (catalog browse done; wire to download + the installer)
 
-### 1.0.x — UX & resolution polish
+### UX & resolution polish
 - [ ] Progress bar / spinner during downloads + apply
 - [ ] Package rating & reviews integration
 - [ ] Dependency conflict-resolution UI
 - [ ] Namespace scoping for dependency-confusion defense (mostly nous-side)
 
-> AGNOS-gated execution work (real `--apply` on hardware, the `apt-agnos`
-> bridge, the system-backend seam, plan-signing-for-shakti) is **not** in the
-> 1.0.x arc — it's the 1.1.x AGNOS track below.
+> The system-backend seam, the native-installer wiring, and resolve-"latest"
+> from this arc **shipped in 1.1.0** (M0/M1). The remaining AGNOS-gated execution
+> work (real `--apply` on hardware, the `apt-agnos` bridge, plan-signing-for-
+> shakti) is the 1.1.x AGNOS track below.
 
 ## v0.9.0 — Quality gates (released 2026-06-18)
 
@@ -260,21 +285,45 @@ ark is the pivot; the path is already captured in code + ADRs.
 - [ ] Plan signing for shakti verification
 - [ ] Integration tested on AGNOS target hardware
 
-### 1.1.x → native, apt-independent package management
+### 1.1.x → native, apt-independent package management (the "ark v2 sovereignty path")
 **Goal: AGNOS owns its package layer end to end — no dependency on Debian's
 apt/dpkg.** apt becomes an optional compat shim; the native path (zugot →
-takumi → native store, signed prebuilt artifacts) becomes the primary system
-source. See [ADR 0002](../adr/0002-package-source-model.md).
+takumi → signed native `.ark` → nous → ark) becomes the primary system source.
+See [ADR 0002](../adr/0002-package-source-model.md).
 
-- [ ] Native package store: promote `PackageDb` to the authoritative installed-package store (no `dpkg-query`); native artifact format on `.ark`, SHA-256 + Ed25519 verified
-- [ ] Native install/remove (unpack/link + record) — executor lowering target alongside apt
-- [ ] Native system resolver (nous): `SOURCE_NATIVE` against a native index + local store; `STRAT_SYSTEM_FIRST` native-first, apt-fallback behind a capability flag
-- [ ] Native repo/mirror protocol: signed index + content-addressed artifacts (folds in mirror support); base-system bootstrap with no apt
-- [ ] Compat & migration: apt demoted to `--source apt`; one-time dpkg-set import into the native store
+> **Why this is now a sequenced arc, not a wishlist**: **agnova (the native
+> installer) can't install anything *right* without a sovereign package manager
+> beneath it** — on a no-apt box, `agnova install <x>` is meaningless unless this
+> chain resolves/fetches/verifies/materializes natively. So this is on the
+> **critical path** (`sovereign ark → agnova → server-stage exit`), not parallel
+> ecosystem work. Full cross-repo orchestration spine + the adversarially-verified
+> milestone analysis (apt-disposition, gates, stage split, the agnos-surface gaps
+> filed as agnos 1.51.x): [`agnosticos/docs/development/planning/ark-v2-sovereignty-path.md`](https://github.com/MacCracken/agnosticos/blob/main/docs/development/planning/ark-v2-sovereignty-path.md).
+>
+> **⚠ Scope correction**: M0–M2 below are **host-side Linux refactor work and are
+> NOT AGNOS-gated** (despite this section sitting under the "AGNOS track" header) —
+> they're unblocked *today*. Only M3+ (on-agnos) waits on kernel/shakti surface.
+>
+> **apt disposition (verified)**: **KEEP apt behind the `system_backend` seam — do
+> NOT delete it.** It's already dead-by-construction on agnos (`nous/sysdb.cyr`
+> gates the whole system leg on `which_exists("apt-cache") && which_exists("dpkg-query")`;
+> agnos has neither → unreachable). The sovereign cutover is a **default-flip**, not
+> a removal; deleting breaks the Debian dev/CI loop for zero gain. (ADR 0002.)
 
-Cross-repo: co-designed with **nous** (native resolver), **takumi** (build
-backend), **zugot** (recipes), and **shakti** (privileged install). ark drives;
-resolution stays in nous.
+ark's share of the arc (ark drives; resolution stays in nous; build in takumi):
+
+- [x] **M0 — `system_backend` seam** — **shipped in 1.1.0** (see Completed). ADR 0002 seam in `ArkConfig` + `exec.cyr step_to_argv_be`; apt byte-identical, apt-agnos/native selectable.
+- [x] **M1 — wire resolved steps → the native `.ark` installer** — **shipped in 1.1.0**. `exec_plan` routes marketplace/native steps to ark's installer/remover, plan-txn rollback, source-aware reverse, resolve-"latest" via mela. *(Still open: auto-**download** of a resolved-but-uncached package from a configured default marketplace.)*
+- [x] **M2 — native backend + authoritative store (ark's share)** — **shipped in 1.1.0**. `BACKEND_NATIVE` lowering + `PackageDb` as the authoritative store; agnos defaults to native. **Producer gate (nous, still open):** the `SOURCE_NATIVE` resolver + signed index + lockfile do not exist in nous 1.2.7 — ark is the wired-and-ready consumer; the resolver half lands when nous ships it (and the store stays empty until takumi builds a real zugot recipe → `.ark` and indexes it).
+- [x] **M3 — syscall portability triage (host-side)** — **shipped in 1.1.0**. `src/portable.cyr` `#ifdef` shims; the **agnos cross-build now compiles**, host byte-identical. **Still open (deferred):** on-agnos QEMU+iron runtime validation (compiling ≠ working); symlink-bearing `.ark` is rejected on agnos until the symlink syscall lands (agnos 1.51.x (a)).
+- [ ] **M4 — AGNOS-side update mechanism (ark's share; server).** Turn `ark_update`/`ark_upgrade` from plan-display into real **apply-on-native** that re-materializes from verified `.ark` with a rollback-able transaction (rides the present crash-safe ext2/4 + ark txn log + `ark_rollback`). **Gated on an agnos/gnoboot boot-slot or atomic-image-swap primitive (absent — filed agnos 1.51.x (b))**; the A/B-slot-vs-in-place model is an open design call.
+- [ ] **Compat & migration**: apt demoted to `--source apt`; one-time dpkg-set import into the native store (Debian-host convenience).
+
+> **Not ark's milestones** (tracked in their repos, listed here for the chain):
+> **M5** sovereign build-step executor + **M6** self-host "build agnos on agnos" → **takumi**;
+> the `SOURCE_NATIVE` resolver / signed index / lockfile → **nous**; recipe portability +
+> native index format → **zugot**. The blocking `apt-agnos` bridge + shakti privileged
+> execution stay in the *1.1.x live privileged execution* subsection above.
 
 ## Future (speculative)
 

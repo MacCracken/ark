@@ -80,7 +80,7 @@ fn txn_status_to_str(status, error_msg) {
 fn txn_new(id, user) {
     var p = alloc(TXN_SZ);
     store64(p, id);
-    store64(p + 8, syscall(201, 0));
+    store64(p + 8, ark_now_secs());
     store64(p + 16, 0);
     store64(p + 24, TXN_IN_PROGRESS);
     store64(p + 32, str_from(""));
@@ -195,7 +195,7 @@ fn txn_log_persist(log, txn) {
     if (lfd >= 0) {
         file_lock(lfd);
         file_write(lfd, str_data(json_line), str_len(json_line));
-        syscall(74, lfd);
+        ark_fsync(lfd);
         file_unlock(lfd);
         file_close(lfd);
     }
@@ -274,7 +274,7 @@ fn txn_log_commit(log, tid) {
     var t = vec_get(tlog_txns(log), idx);
     if (txn_status(t) != TXN_IN_PROGRESS) { return 0; }
     txn_set_status(t, TXN_COMMITTED);
-    txn_set_completed(t, syscall(201, 0));
+    txn_set_completed(t, ark_now_secs());
     txn_log_persist(log, t);
     return 1;
 }
@@ -295,7 +295,7 @@ fn txn_log_rollback(log, tid) {
         i = i + 1;
     }
     txn_set_status(t, TXN_ROLLED_BACK);
-    txn_set_completed(t, syscall(201, 0));
+    txn_set_completed(t, ark_now_secs());
     txn_log_persist(log, t);
     return 1;
 }
@@ -307,7 +307,7 @@ fn txn_log_fail(log, tid, error) {
     if (txn_status(t) != TXN_IN_PROGRESS) { return 0; }
     txn_set_status(t, TXN_FAILED);
     txn_set_errmsg(t, error);
-    txn_set_completed(t, syscall(201, 0));
+    txn_set_completed(t, ark_now_secs());
     txn_log_persist(log, t);
     return 1;
 }

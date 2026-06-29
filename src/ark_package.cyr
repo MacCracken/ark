@@ -561,7 +561,12 @@ fn apkg_path_safe(pathc) {
 # (use "" for the real root), and register the package in the manager's
 # PackageDb with per-file hashes + signature. Records an install
 # transaction. Returns an ArkResult (success/0 on read/verify failure).
-fn ark_pkg_install(mgr, ark_path_cstr, install_root_cstr, max_len) {
+# Read + verify + trust-gate + materialize + register a `.ark`. When
+# record_txn==1 it also records a standalone install transaction (the
+# `ark install ./pkg.ark` path); when 0 the caller owns the transaction (the
+# executor records the op in its plan-wide txn — M1), so there is no nested
+# transaction. install_root_cstr "" = real root.
+fn ark_pkg_install_inner(mgr, ark_path_cstr, install_root_cstr, max_len, record_txn, source) {
     var p = ark_pkg_read(ark_path_cstr, max_len);
     if (p == 0) {
         return ark_result_new(0, str_from("ark: package read or verification failed"),
@@ -581,7 +586,7 @@ fn ark_pkg_install(mgr, ark_path_cstr, install_root_cstr, max_len) {
     var m = apkg_manifest(p);
     var name = str_from(apkg_man_name(m));
     var version = str_from(apkg_man_version(m));
-    var entry = db_entry_new(name, version, SOURCE_MARKETPLACE);
+    var entry = db_entry_new(name, version, source);
     var files = pdbe_files(entry);
     var data = apkg_data(p);
     var entries = apkg_entries(p);
@@ -590,10 +595,20 @@ fn ark_pkg_install(mgr, ark_path_cstr, install_root_cstr, max_len) {
     # the install root — before writing a single file (no partial install).
     var gi = 0;
     while (gi < vec_len(entries)) {
-        if (apkg_path_safe(apkg_afe_path(vec_get(entries, gi))) == 0) {
+        var ge = vec_get(entries, gi);
+        if (apkg_path_safe(apkg_afe_path(ge)) == 0) {
             return ark_result_new(0,
             str_from("ark: refusing install — unsafe package path (traversal)"),
             vec_new(), SOURCE_MARKETPLACE);
+        }
+        # Fail closed on a target without symlink support (agnos) rather than
+        # registering a symlink that was never created (M3 — see portable.cyr).
+        if (apkg_afe_file_type(ge) == ARK_FT_SYMLINK) {
+            if (ark_symlink_supported() == 0) {
+                return ark_result_new(0,
+                str_from("ark: refusing install — symlink entries unsupported on this target"),
+                vec_new(), SOURCE_MARKETPLACE);
+            }
         }
         gi = gi + 1;
     }
@@ -634,7 +649,7 @@ fn ark_pkg_install(mgr, ark_path_cstr, install_root_cstr, max_len) {
             var spath = apkg_afe_path(es);
             var sfull = apkg_join(install_root_cstr, spath);
             apkg_mkdir_parents(sfull);
-            sys_symlink(apkg_afe_symlink_target(es), sfull);
+            ark_symlink(apkg_afe_symlink_target(es), sfull);
             vec_push(files, str_from(spath));
             nfiles = nfiles + 1;
         }
@@ -647,13 +662,19 @@ fn ark_pkg_install(mgr, ark_path_cstr, install_root_cstr, max_len) {
         if (strlen(sig) > 0) { pdbe_set_signature(entry, str_from(sig)); }
     }
     pkg_db_register(amgr_db(mgr), entry);
+    # Persist the store to disk — every ark process reloads packages.json, so an
+    # in-memory-only register would be lost across the CLI lifecycle.
+    pkg_db_save(amgr_db(mgr));
 
-    # Record the install in the transaction log.
-    var log = amgr_log(mgr);
-    var tid = txn_log_begin(log, exec_current_user());
-    txn_log_add_op(log, tid, txn_op_new(OP_INSTALL, name, version, SOURCE_MARKETPLACE));
-    txn_log_mark_op_complete(log, tid, name);
-    txn_log_commit(log, tid);
+    # Record the install in the transaction log, unless the caller owns the
+    # transaction (executor path — the op is recorded in the plan-wide txn).
+    if (record_txn == 1) {
+        var log = amgr_log(mgr);
+        var tid = txn_log_begin(log, exec_current_user());
+        txn_log_add_op(log, tid, txn_op_new(OP_INSTALL, name, version, source));
+        txn_log_mark_op_complete(log, tid, name);
+        txn_log_commit(log, tid);
+    }
 
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "Installed ");
@@ -665,5 +686,57 @@ fn ark_pkg_install(mgr, ark_path_cstr, install_root_cstr, max_len) {
     str_builder_add_cstr(sb, " files)");
     var affected = vec_new();
     vec_push(affected, name);
-    return ark_result_new(1, str_builder_build(sb), affected, SOURCE_MARKETPLACE);
+    return ark_result_new(1, str_builder_build(sb), affected, source);
+}
+
+# Public install: read+verify+materialize+register AND record its own
+# transaction (the standalone `ark install ./pkg.ark` / marketplace path).
+# A standalone local/marketplace `.ark` registers as SOURCE_MARKETPLACE.
+fn ark_pkg_install(mgr, ark_path_cstr, install_root_cstr, max_len) {
+    return ark_pkg_install_inner(mgr, ark_path_cstr, install_root_cstr, max_len, 1, SOURCE_MARKETPLACE);
+}
+
+# Native remove: unregister a package from the PackageDb store and unlink its
+# owned files under install_root_cstr ("" = real root). The authoritative
+# record of what's installed is the PackageDb (ark never shells dpkg-query),
+# so removal is store-driven. When record_txn==1 it records a standalone
+# remove transaction; when 0 the caller owns the txn (executor / rollback).
+# Returns an ArkResult; success even if some files were already gone.
+fn ark_pkg_remove_inner(mgr, name_str, install_root_cstr, record_txn) {
+    var db = amgr_db(mgr);
+    var entry = pkg_db_get(db, str_data(name_str));
+    if (entry == 0) {
+        var em = str_builder_new();
+        str_builder_add_cstr(em, "ark: not installed: ");
+        str_builder_add(em, name_str);
+        return ark_result_new(0, str_builder_build(em), vec_new(), SOURCE_MARKETPLACE);
+    }
+    var version = pdbe_version(entry);
+    var esrc = pdbe_source(entry);
+    # Unlink owned files (deepest-last order is irrelevant for plain files).
+    var files = pdbe_files(entry);
+    var i = 0;
+    while (i < vec_len(files)) {
+        var full = apkg_join(install_root_cstr, str_data(vec_get(files, i)));
+        ark_unlink(full);
+        i = i + 1;
+    }
+    pkg_db_unregister(db, name_str);
+    # Persist the store — the removal must survive across CLI processes.
+    pkg_db_save(db);
+
+    if (record_txn == 1) {
+        var log = amgr_log(mgr);
+        var tid = txn_log_begin(log, exec_current_user());
+        txn_log_add_op(log, tid, txn_op_new(OP_REMOVE, name_str, version, esrc));
+        txn_log_mark_op_complete(log, tid, name_str);
+        txn_log_commit(log, tid);
+    }
+
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "Removed ");
+    str_builder_add(sb, name_str);
+    var affected = vec_new();
+    vec_push(affected, name_str);
+    return ark_result_new(1, str_builder_build(sb), affected, esrc);
 }

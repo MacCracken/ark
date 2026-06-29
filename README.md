@@ -19,7 +19,8 @@ ark install <package> --apply      # execute (prompts to confirm)
 ark install <package> --dry-run    # show the exact commands it would run
 ark install --group <group>        # a package group (e.g., agnos-desktop)
 ark install ./pkg.ark [--root DIR] # install a local .ark (verify → materialize)
-ark install name@ver --marketplace <url>   # download from a mela marketplace, then install
+ark install name[@ver] --marketplace <url>  # marketplace install (omit @ver to resolve "latest")
+ark install <package> --system-backend native   # apt | apt-agnos | native (ADR 0002)
 
 ark remove <package> [--purge] [--apply]    # remove (and optionally its config)
 ark search <query>                 # search across sources

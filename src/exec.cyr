@@ -51,13 +51,34 @@ fn step_source(step) {
     return SOURCE_SYSTEM;
 }
 
-# Lower a step to the *underlying* system command argv (no shakti prefix).
-# Returns a vec of Str, or 0 if the step's backend is not yet wired.
-fn step_to_argv(step) {
+# Lower a step to the *underlying* system command argv (no shakti prefix),
+# honoring the configured system backend (ADR 0002):
+#   BACKEND_APT        -> `apt-get …`
+#   BACKEND_APT_AGNOS  -> `<wrapper> apt-get …` — apt fronted by the AGNOS
+#                         syscall wrapper (ark only prefixes it; AGNOS owns it)
+#   BACKEND_NATIVE     -> 0 for SOURCE_SYSTEM steps; ark's native `.ark`
+#                         installer runs them (no external command to exec)
+# Flutter (agpkg) and marketplace lowering are backend-independent. Returns a
+# vec of Str, or 0 when the step has no shell command (native/marketplace ->
+# routed to the native installer by exec_plan).
+fn step_to_argv_be(step, backend, wrapper) {
     var tag = istep_tag(step);
     var pkg = istep_pkg(step);
     var ver = istep_ver(step);
+    # Native backend: system packages install via ark's own `.ark` installer,
+    # not an external package tool — signal "not a shell step" like marketplace.
+    if (backend == BACKEND_NATIVE) {
+        if (tag == STEP_SYSTEM_INSTALL) { return 0; }
+        if (tag == STEP_SYSTEM_REMOVE) { return 0; }
+        if (tag == STEP_SYSTEM_UPDATE) { return 0; }
+    }
     var argv = vec_new();
+    # apt-agnos fronts every apt invocation with the AGNOS syscall wrapper.
+    if (backend == BACKEND_APT_AGNOS) {
+        if (tag == STEP_SYSTEM_INSTALL || tag == STEP_SYSTEM_REMOVE || tag == STEP_SYSTEM_UPDATE) {
+            vec_push(argv, wrapper);
+        }
+    }
     if (tag == STEP_SYSTEM_INSTALL) {
         vec_push(argv, str_from("apt-get"));
         vec_push(argv, str_from("install"));
@@ -105,8 +126,14 @@ fn step_to_argv(step) {
     # There is no external "install" command to exec: ark installs them via
     # its own native `.ark` installer (extract + register to PackageDb), not
     # through step_to_argv. Returning 0 signals "not a shell step" — the
-    # executor routes these to the native installer once it lands.
+    # executor routes these to the native installer (exec_plan).
     return 0;
+}
+
+# Convenience: lower a step under the default (apt) backend. Kept so call
+# sites and tests that don't care about the backend stay byte-identical.
+fn step_to_argv(step) {
+    return step_to_argv_be(step, BACKEND_APT, str_from(DEFAULT_APT_WRAPPER));
 }
 
 # Prepend the shakti escalation prefix when a step needs privilege.
@@ -140,6 +167,38 @@ fn ark_apply_or_describe(mgr, iplan, describe_result) {
     return describe_result;
 }
 
+# Run a native (no-shell) step via ark's own `.ark` installer/remover — the
+# path for marketplace/community steps and, under BACKEND_NATIVE, system steps
+# (ADR 0002). Install steps materialize the package's `.ark` from the local
+# cache (cache_dir/<name>-<version>.ark); remove steps unregister + unlink from
+# the PackageDb store. The staging root is ArkConfig.native_root ("" = real
+# root). record_txn==0 → the caller (exec_plan) owns the plan-wide txn.
+fn exec_native_step(mgr, step, record_txn) {
+    var config = amgr_config(mgr);
+    var nroot = acfg_native_root(config);
+    var iroot = "";
+    if (nroot != 0) { if (str_len(nroot) > 0) { iroot = str_data(nroot); } }
+    var tag = istep_tag(step);
+    var pkg = istep_pkg(step);
+    if (tag == STEP_MARKETPLACE_REMOVE || tag == STEP_SYSTEM_REMOVE) {
+        return ark_pkg_remove_inner(mgr, pkg, iroot, record_txn);
+    }
+    # Install: the `.ark` must already be in the local cache (no network here —
+    # marketplace download is the explicit `--marketplace URL` path / M1 latest).
+    var cache_dir = acfg_cache_dir(config);
+    var cache_path = ark_marketplace_cache_path(cache_dir, pkg, istep_ver(step));
+    var cpath = str_data(cache_path);
+    if (file_exists(cpath) == 0) {
+        var em = str_builder_new();
+        str_builder_add_cstr(em, "ark: native install — no local .ark for '");
+        str_builder_add(em, pkg);
+        str_builder_add_cstr(em, "' in cache ");
+        str_builder_add(em, cache_dir);
+        return ark_result_new(0, str_builder_build(em), vec_new(), step_source(step));
+    }
+    return ark_pkg_install_inner(mgr, cpath, iroot, 134217728, record_txn, step_source(step));
+}
+
 # Execute (or, when dry_run==1, describe) an InstallPlan.
 # Returns an ArkResult: success(1)/message, or failure(0)/message on the
 # first non-zero step. On a real run, each step is recorded to the
@@ -155,6 +214,8 @@ fn exec_plan(mgr, iplan, dry_run) {
 
     var config = amgr_config(mgr);
     var shakti_path = acfg_shakti_path(config);
+    var backend = acfg_system_backend(config);
+    var wrapper = acfg_apt_wrapper(config);
     var log = amgr_log(mgr);
 
     var sb = str_builder_new();
@@ -171,40 +232,58 @@ fn exec_plan(mgr, iplan, dry_run) {
     while (i < n) {
         var step = vec_get(steps, i);
         var pkg = istep_pkg(step);
-        var argv = step_to_argv(step);
+        var argv = step_to_argv_be(step, backend, wrapper);
         if (argv == 0) {
-            var msg = str_builder_new();
-            str_builder_add_cstr(msg, "step backend not yet wired for '");
-            str_builder_add(msg, pkg);
-            str_builder_add_cstr(msg, "' (marketplace install uses the native .ark installer, pending)");
-            var emsg = str_builder_build(msg);
-            if (dry_run == 0) { txn_log_fail(log, tid, emsg); }
-            return ark_result_new(0, emsg, affected, step_source(step));
-        }
-        var full = exec_wrap_argv(argv, step_needs_root(step), shakti_path);
-
-        if (dry_run == 1) {
-            str_builder_add_cstr(sb, "  ");
-            str_builder_add(sb, exec_argv_to_str(full));
-            str_builder_add_cstr(sb, "\n");
-            vec_push(affected, pkg);
-        } else {
-            var op = txn_op_new(step_op_type(step), pkg, istep_ver(step), step_source(step));
-            txn_log_add_op(log, tid, op);
-            var rc = exec_vec_str(full);
-            if (rc == 0) {
-                txn_log_mark_op_complete(log, tid, pkg);
+            # Native step (marketplace/community, or system under BACKEND_NATIVE):
+            # ark's own `.ark` installer runs it — no external command. The op is
+            # recorded in this plan's transaction so rollback can reverse it.
+            if (dry_run == 1) {
+                str_builder_add_cstr(sb, "  (native) ");
+                if (step_op_type(step) == OP_REMOVE) { str_builder_add_cstr(sb, "remove "); }
+                else { str_builder_add_cstr(sb, "install "); }
+                str_builder_add(sb, pkg);
+                str_builder_add_cstr(sb, "\n");
                 vec_push(affected, pkg);
             } else {
-                var em = str_builder_new();
-                str_builder_add_cstr(em, "command failed (exit ");
-                str_builder_add_int(em, rc);
-                str_builder_add_cstr(em, "): ");
-                str_builder_add(em, exec_argv_to_str(full));
-                var efail = str_builder_build(em);
-                txn_log_mark_op_failed(log, tid, pkg, efail);
-                txn_log_fail(log, tid, efail);
-                return ark_result_new(0, efail, affected, step_source(step));
+                var nop = txn_op_new(step_op_type(step), pkg, istep_ver(step), step_source(step));
+                txn_log_add_op(log, tid, nop);
+                var nres = exec_native_step(mgr, step, 0);
+                if (ares_success(nres) == 1) {
+                    txn_log_mark_op_complete(log, tid, pkg);
+                    vec_push(affected, pkg);
+                } else {
+                    var nfail = ares_message(nres);
+                    txn_log_mark_op_failed(log, tid, pkg, nfail);
+                    txn_log_fail(log, tid, nfail);
+                    return ark_result_new(0, nfail, affected, step_source(step));
+                }
+            }
+        } else {
+            var full = exec_wrap_argv(argv, step_needs_root(step), shakti_path);
+
+            if (dry_run == 1) {
+                str_builder_add_cstr(sb, "  ");
+                str_builder_add(sb, exec_argv_to_str(full));
+                str_builder_add_cstr(sb, "\n");
+                vec_push(affected, pkg);
+            } else {
+                var op = txn_op_new(step_op_type(step), pkg, istep_ver(step), step_source(step));
+                txn_log_add_op(log, tid, op);
+                var rc = exec_vec_str(full);
+                if (rc == 0) {
+                    txn_log_mark_op_complete(log, tid, pkg);
+                    vec_push(affected, pkg);
+                } else {
+                    var em = str_builder_new();
+                    str_builder_add_cstr(em, "command failed (exit ");
+                    str_builder_add_int(em, rc);
+                    str_builder_add_cstr(em, "): ");
+                    str_builder_add(em, exec_argv_to_str(full));
+                    var efail = str_builder_build(em);
+                    txn_log_mark_op_failed(log, tid, pkg, efail);
+                    txn_log_fail(log, tid, efail);
+                    return ark_result_new(0, efail, affected, step_source(step));
+                }
             }
         }
         i = i + 1;

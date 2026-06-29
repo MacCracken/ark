@@ -1,10 +1,10 @@
 [package]
 name = "ark"
-version = "1.0.0"
+version = "1.1.0"
 description = "ark - Cyrius port"
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "6.2.21"
+cyrius = "6.3.5"
 
 [build]
 entry = "src/main.cyr"

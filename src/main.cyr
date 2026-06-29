@@ -2,6 +2,7 @@
 #
 # Module layout:
 #   types.cyr       - constants, enums, struct accessors
+#   portable.cyr    - host/agnos syscall portability shims (ADR 0003)
 #   output.cyr      - ArkOutputLine, ArkOutput, rendering
 #   transaction.cyr - TransactionOp, Transaction, TransactionLog
 #   db.cyr          - PackageDbEntry, PackageDb, integrity, signing
@@ -11,6 +12,7 @@
 #   cli.cyr         - parse_args, config, confirmation, main()
 
 include "src/types.cyr"
+include "src/portable.cyr"
 include "src/output.cyr"
 include "src/transaction.cyr"
 include "src/db.cyr"

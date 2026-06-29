@@ -1,0 +1,84 @@
+# =========================================================================
+# portable.cyr — host/agnos syscall portability shims (M3).
+#
+# ark's Linux-host code reached for raw x86_64 syscall numbers (time=201,
+# fsync=74, rename=82) and the 1-arg sys_symlink / sys_unlink wrappers. AGNOS
+# uses different Sys numbers and ABIs: rename/unlink take explicit lengths,
+# wall-clock is sys_time_unix (#46), and there is NO fsync or symlink syscall
+# (filed agnos 1.51.x — two-sided agnos+cyrius). A raw `syscall(201,0)` etc.
+# compiles for agnos but invokes the WRONG syscall there.
+#
+# These shims route each operation through the portable form so the agnos
+# cross-build compiles AND resolves to the correct agnos Sys numbers, while the
+# x86_64-linux host path stays byte-identical (each wrapper inlines to exactly
+# the syscall ark used before). On-agnos *runtime* validation (QEMU + iron) is
+# the M3 acceptance criterion in the roadmap (1.1.x AGNOS track). A `.ark` that
+# carries a symlink entry is rejected on agnos while the symlink syscall is
+# absent — agnos fixtures are symlink-free.
+# =========================================================================
+
+# Wall-clock seconds since the Unix epoch. Host: chrono clock_epoch_secs
+# (time/gettimeofday); agnos: sys_time_unix (#46). Replaces raw syscall(201,0).
+fn ark_now_secs() {
+    return clock_epoch_secs();
+}
+
+# fsync(fd) — flush a file to stable storage. Host: SYS_FSYNC (#74). agnos has
+# no fsync syscall (durability is a no-op on its current FS model) -> 0.
+# Replaces raw syscall(74, fd).
+fn ark_fsync(fd) {
+    #ifdef CYRIUS_TARGET_AGNOS
+    return 0;
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    return sys_fsync(fd);
+    #endif
+}
+
+# rename(old, new) over cstr paths. Host: 2-arg SYS_RENAME (#82). agnos: 4-arg
+# rename(old, oldlen, new, newlen) (#31). Replaces raw syscall(82, old, new).
+fn ark_rename(oldc, newc) {
+    #ifdef CYRIUS_TARGET_AGNOS
+    return sys_rename(oldc, strlen(oldc), newc, strlen(newc));
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    return sys_rename(oldc, newc);
+    #endif
+}
+
+# unlink(path) over a cstr. Host: 1-arg SYS_UNLINK. agnos: 2-arg
+# unlink(path, len). Replaces a bare sys_unlink(path) on the host.
+fn ark_unlink(pathc) {
+    #ifdef CYRIUS_TARGET_AGNOS
+    return sys_unlink(pathc, strlen(pathc));
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    return sys_unlink(pathc);
+    #endif
+}
+
+# symlink(target, linkpath) over cstrs. Host: SYS_SYMLINK (#88). agnos has NO
+# symlink syscall (filed agnos 1.51.x (a)) -> -1, so a `.ark` carrying a symlink
+# entry fails clean on agnos rather than calling an undefined symbol; this is
+# what makes the agnos cross-build link. Scope agnos installs to symlink-free
+# fixtures until the syscall lands. Replaces a bare sys_symlink call.
+fn ark_symlink(targetc, linkpathc) {
+    #ifdef CYRIUS_TARGET_AGNOS
+    return 0 - 1;
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    return sys_symlink(targetc, linkpathc);
+    #endif
+}
+
+# 1 when the target supports the symlink syscall (host), 0 on agnos. Lets the
+# installer reject a symlink-bearing `.ark` *before any write* rather than
+# silently registering a symlink it never created.
+fn ark_symlink_supported() {
+    #ifdef CYRIUS_TARGET_AGNOS
+    return 0;
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    return 1;
+    #endif
+}

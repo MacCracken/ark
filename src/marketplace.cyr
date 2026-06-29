@@ -59,10 +59,20 @@ fn ark_marketplace_install(mgr, base_url, cache_dir, name, version, install_root
     return ark_pkg_install(mgr, cpath, iroot, max_len);
 }
 
-# CLI glue: `ark install name@version --marketplace URL [--root DIR]`. Splits
-# the `name@version` arg and resolves the cache dir from config, then runs the
-# marketplace install. Requires an explicit version (no server round-trip to
-# resolve "latest" yet).
+# Resolve a package's "latest" concrete version from the mela manifest endpoint
+# ({base}/v1/packages/{name}/latest), composing mela's primitives the way
+# rc_check_updates does. Returns the version Str, or 0 (offline / unknown).
+fn ark_marketplace_resolve_latest(base_url, name) {
+    var resp = _rc_http_get(build_latest_url(base_url, name));
+    if (resp == 0) { return 0; }
+    var man = manifest_from_json(resp);
+    if (man == 0) { return 0; }
+    return man_version(man);
+}
+
+# CLI glue: `ark install name[@version] --marketplace URL [--root DIR]`. Splits
+# `name@version`; when the `@version` is omitted, resolves "latest" via the mela
+# manifest endpoint (M1). Resolves the cache dir from config, then installs.
 fn ark_marketplace_install_arg(mgr, url, pkg_arg, root) {
     var data = str_data(pkg_arg);
     var n = str_len(pkg_arg);
@@ -72,12 +82,31 @@ fn ark_marketplace_install_arg(mgr, url, pkg_arg, root) {
         if (load8(data + i) == 64) { at = i; break; }
         i = i + 1;
     }
-    if (at <= 0 || at >= n - 1) {
-        return ark_result_new(0, str_from("ark: marketplace install needs name@version"),
+    # A leading '@' (no name) or trailing '@' (empty version) is malformed.
+    if (at == 0 || at == n - 1) {
+        return ark_result_new(0, str_from("ark: malformed name@version"),
         vec_new(), SOURCE_MARKETPLACE);
     }
-    var name = str_new(data, at);
-    var version = str_new(data + at + 1, n - at - 1);
+    var name = pkg_arg;
+    var version = str_from("");
+    if (at < 0) {
+        # No explicit version → resolve "latest" from the marketplace manifest.
+        # Validate the name BEFORE it is string-concatenated into the manifest
+        # URL (don't let an unvalidated arg reach the request path).
+        if (validate_path_segment(name) == 0) {
+            return ark_result_new(0, str_from("ark: invalid marketplace package name"),
+            vec_new(), SOURCE_MARKETPLACE);
+        }
+        version = ark_marketplace_resolve_latest(url, name);
+        if (version == 0) {
+            return ark_result_new(0,
+            str_from("ark: could not resolve latest version (offline or unknown package)"),
+            vec_new(), SOURCE_MARKETPLACE);
+        }
+    } else {
+        name = str_new(data, at);
+        version = str_new(data + at + 1, n - at - 1);
+    }
     var cache_dir = acfg_cache_dir(amgr_config(mgr));
     return ark_marketplace_install(mgr, url, cache_dir, name, version, root, 134217728);
 }

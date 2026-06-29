@@ -16,12 +16,17 @@
 # Constants
 # =========================================================================
 
-var ARK_VERSION_STR = "1.0.0";
+var ARK_VERSION_STR = "1.1.0";
 
 var DEFAULT_TRANSACTION_LOG_PATH = "/var/lib/agnos/ark/transaction.log";
 var DEFAULT_PACKAGE_DB_PATH = "/var/lib/agnos/ark/packages.json";
 var DEFAULT_SHAKTI_PATH = "/usr/bin/shakti";
 var DEFAULT_TRUST_KEYS_PATH = "/etc/agnos/ark/trusted_keys";
+# apt-agnos backend: the AGNOS syscall-wrapper command apt/dpkg are fronted
+# by, so the unmodified Debian toolchain runs under AGNOS (ADR 0002). ark does
+# NOT implement the wrapper — it only prefixes apt argv with it; AGNOS owns the
+# shim's shape, so the path is configurable. Default is a bare command (PATH).
+var DEFAULT_APT_WRAPPER = "apt-agnos";
 
 # ANSI color codes
 var ANSI_RESET = "\x1b[0m";
@@ -61,6 +66,39 @@ fn strategy_to_str(s) {
     if (s == STRAT_ONLY_SOURCE) { return "OnlySource"; }
     if (s == STRAT_SEARCH_ALL) { return "SearchAll"; }
     return "Unknown";
+}
+
+# =========================================================================
+# SystemBackend — how the SOURCE_SYSTEM path resolves + executes (ADR 0002).
+# The backend mode decides the *inner* command; shakti still escalates
+# (ADR 0001). One seam, three interchangeable implementations:
+#   apt        — `apt-get …` directly (Debian dev/CI, Debian-base hosts).
+#   apt-agnos  — apt-get fronted by the AGNOS syscall wrapper (interim AGNOS
+#                bridge, until native lands). ark only prefixes the wrapper.
+#   native     — ark's own `.ark` installer + PackageDb store, no apt (AGNOS
+#                target). System steps route to the native installer.
+# =========================================================================
+
+enum SystemBackend {
+    BACKEND_APT = 0;
+    BACKEND_APT_AGNOS = 1;
+    BACKEND_NATIVE = 2;
+}
+
+fn backend_to_str(b) {
+    if (b == BACKEND_APT) { return "apt"; }
+    if (b == BACKEND_APT_AGNOS) { return "apt-agnos"; }
+    if (b == BACKEND_NATIVE) { return "native"; }
+    return "unknown";
+}
+
+# Parse a backend name to its enum value; Err(1) on an unknown name.
+fn parse_backend_str(s) {
+    if (streq(s, "apt")) { return Ok(BACKEND_APT); }
+    if (streq(s, "apt-agnos")) { return Ok(BACKEND_APT_AGNOS); }
+    if (streq(s, "aptagnos")) { return Ok(BACKEND_APT_AGNOS); }
+    if (streq(s, "native")) { return Ok(BACKEND_NATIVE); }
+    return Err(1);
 }
 
 # =========================================================================
@@ -219,14 +257,19 @@ fn ark_result_new(success, message, packages, source) {
 # Fields: default_strategy(0) confirm_system_installs(8) confirm_removals(16)
 #         auto_update_check(24) color_output(32) marketplace_dir(40)
 #         cache_dir(48) package_db_path(56) transaction_log_path(64)
-#         shakti_path(72) apply(80) => 88 bytes
+#         shakti_path(72) apply(80) trust_keys(88) require_signed(96)
+#         system_backend(104) apt_wrapper(112) native_root(120) => 128 bytes
 #
 # shakti_path: setuid privilege-escalation binary the executor invokes for
 #   privileged steps (see docs/adr/0001-shakti-execution-backend.md).
 # apply: 0 = plan only (default — safe); 1 = run the plan via the executor.
+# trust_keys / require_signed: `.ark` signature trust anchor + fail-closed gate.
+# system_backend: SOURCE_SYSTEM resolution+execution mode (ADR 0002) —
+#   BACKEND_APT (default) / BACKEND_APT_AGNOS / BACKEND_NATIVE.
+# apt_wrapper: command apt-get is fronted by in BACKEND_APT_AGNOS mode.
 # =========================================================================
 
-var ACFG_SZ = 104;
+var ACFG_SZ = 128;
 
 fn acfg_strategy(p) { return load64(p); }
 fn acfg_confirm_sys(p) { return load64(p + 8); }
@@ -248,6 +291,17 @@ fn acfg_set_trust_keys(p, v) { store64(p + 88, v); }
 # Policy: 1 = refuse installs unless the signer is in the trust set (fail closed).
 fn acfg_require_signed(p) { return load64(p + 96); }
 fn acfg_set_require_signed(p, v) { store64(p + 96, v); }
+# System backend mode (ADR 0002): BACKEND_APT / BACKEND_APT_AGNOS / BACKEND_NATIVE.
+fn acfg_system_backend(p) { return load64(p + 104); }
+fn acfg_set_system_backend(p, v) { store64(p + 104, v); }
+# Wrapper command apt-get is fronted by when system_backend == BACKEND_APT_AGNOS.
+fn acfg_apt_wrapper(p) { return load64(p + 112); }
+fn acfg_set_apt_wrapper(p, v) { store64(p + 112, v); }
+# Staging root the executor materializes native/marketplace `.ark` installs
+# under during --apply ("" = real root). Mirrors the CLI `--root` for the
+# resolved-plan path so privileged installs are testable off-root.
+fn acfg_native_root(p) { return load64(p + 120); }
+fn acfg_set_native_root(p, v) { store64(p + 120, v); }
 
 # apply modes (acfg_apply): how the executor treats a built plan.
 enum ApplyMode {
@@ -271,5 +325,18 @@ fn ark_config_default() {
     store64(p + 80, 0);
     store64(p + 88, str_from(DEFAULT_TRUST_KEYS_PATH));
     store64(p + 96, 0);
+    # Default system backend per host (ADR 0002): AGNOS has no apt, so the
+    # native backend (ark's `.ark` store + PackageDb) is the default there;
+    # Debian/dev/CI defaults to apt so existing flows are byte-identical. The
+    # nous SOURCE_NATIVE resolver + signed index/lockfile are the remaining
+    # producer gate (nous-side); ark is the consumer and is wired and ready.
+    #ifdef CYRIUS_TARGET_AGNOS
+    store64(p + 104, BACKEND_NATIVE);
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    store64(p + 104, BACKEND_APT);
+    #endif
+    store64(p + 112, str_from(DEFAULT_APT_WRAPPER));
+    store64(p + 120, str_from(""));
     return p;
 }

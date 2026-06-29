@@ -50,11 +50,22 @@ All operations go through `ark_execute()`.
 ### InstallPlan + executor (iplan_* / src/exec.cyr)
 Plan-first: `install`/`remove` build an `InstallStep` list and, by default, only
 display it. `--dry-run` renders the concrete commands; `--apply` runs them — the
-executor lowers each step and wraps privileged ones as `shakti -- …` (ark never
-holds privilege itself). Native `.ark` packages (local file or marketplace
-download) install via `ark_pkg_install`: verify (root hash + signature +
-per-file hashes) → materialize → register in `PackageDb`. See
-[ADR 0001](../adr/0001-shakti-execution-backend.md).
+executor lowers each step (`step_to_argv_be`) and wraps privileged ones as
+`shakti -- …` (ark never holds privilege itself). The **system backend**
+(`ArkConfig.system_backend`: `apt` / `apt-agnos` / `native`; ADR 0002) decides
+the inner command for `SOURCE_SYSTEM` steps — direct `apt-get`, wrapper-fronted
+`apt-get`, or ark's native `.ark` installer. Native and marketplace/community
+steps route to `ark_pkg_install` / `ark_pkg_remove_inner` (`exec_native_step`):
+verify (root hash + signature + per-file hashes) → materialize → register in
+`PackageDb`, recording the op in the plan-wide transaction so `ark_rollback`
+reverses it. See [ADR 0001](../adr/0001-shakti-execution-backend.md) and
+[ADR 0002](../adr/0002-package-source-model.md).
+
+### Portability shims (ark_* / src/portable.cyr)
+Host/AGNOS-divergent syscalls (`time`, `fsync`, `rename`, `unlink`, `symlink`)
+go through `#ifdef`-guarded wrappers so one source tree compiles for both
+x86_64-Linux and AGNOS, each resolving to the correct Sys number/ABI. See
+[ADR 0003](../adr/0003-syscall-portability-layer.md).
 
 ### TransactionLog (txn_log_*)
 Append-only JSONL persistence via `file_append_locked()` for crash
