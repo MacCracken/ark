@@ -6,8 +6,8 @@
 
 - **Type**: Binary
 - **License**: GPL-3.0-only
-- **MSRV**: 1.89
-- **Version**: SemVer 0.1.0
+- **Min toolchain**: cyrius 6.3.5 (pinned in `.cyrius-toolchain` / `cyrius.cyml`)
+- **Versioning**: SemVer (current version tracked in `VERSION` / CHANGELOG)
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Philosophy**: [AGNOS Philosophy & Intention](https://github.com/MacCracken/agnosticos/blob/main/docs/philosophy.md)
 - **First-party standards**: [First-Party Application Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
@@ -23,7 +23,7 @@ All AGNOS users (installs packages). Ark is the primary interface for package in
 
 0. Read roadmap, CHANGELOG, and open issues — know what was intended before auditing what was built
 1. Test + benchmark sweep of existing code
-2. Cleanliness check: `cargo fmt --check`, `cargo clippy --all-features --all-targets -- -D warnings`, `cargo audit`, `cargo deny check`, `RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps`
+2. Cleanliness check: `cyrius fmt src/main.cyr --check`, `cyrius lint src/main.cyr`, `cyrius vet src/main.cyr`, `cyrius deny src/main.cyr`, `cyrius doc src/main.cyr --check` (or `cyrius audit` for the full fmt/lint/docs/tests/bench sweep)
 3. Get baseline benchmarks (`cyrius bench tests/ark.bcyr`)
 4. Internal deep review — gaps, optimizations, security, logging/errors, docs
 5. External research — domain completeness, missing capabilities, best practices, world-class accuracy
@@ -36,7 +36,7 @@ All AGNOS users (installs packages). Ark is the primary interface for package in
 ### Work Loop / Working Loop (continuous)
 
 1. Work phase — new features, roadmap items, bug fixes
-2. Cleanliness check: `cargo fmt --check`, `cargo clippy --all-features --all-targets -- -D warnings`, `cargo audit`, `cargo deny check`, `RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps`
+2. Cleanliness check: `cyrius fmt src/main.cyr --check`, `cyrius lint src/main.cyr`, `cyrius vet src/main.cyr`, `cyrius deny src/main.cyr`, `cyrius doc src/main.cyr --check` (or `cyrius audit` for the full fmt/lint/docs/tests/bench sweep)
 3. Test + benchmark additions for new code
 4. Run benchmarks (`cyrius bench tests/ark.bcyr`)
 5. Internal review — performance, memory, security, throughput, correctness
@@ -45,7 +45,7 @@ All AGNOS users (installs packages). Ark is the primary interface for package in
 8. Run benchmarks again — prove the wins
 9. If review heavy → return to step 5
 10. Documentation — update CHANGELOG, roadmap, docs, ADRs, source citations (see [Documentation Standards](#documentation-standards))
-11. Version check — VERSION, Cargo.toml, recipe (in zugot) all in sync
+11. Version check — VERSION, cyrius.cyml, src/types.cyr (`ARK_VERSION_STR`), recipe (in zugot) all in sync
 12. Return to step 1
 
 ### Task Sizing
@@ -64,12 +64,12 @@ All AGNOS users (installs packages). Ark is the primary interface for package in
 ### Key Principles
 
 - Never skip benchmarks
-- `#[non_exhaustive]` on ALL public enums (forward compatibility)
-- `#[must_use]` on all pure functions
-- Every type must be Serialize + Deserialize (serde)
-- Feature-gate optional modules — consumers pull only what they need
-- Zero unwrap/panic in library code
-- All types must have serde roundtrip tests
+- Public enums stay forward-compatible — adding a variant must not break consumers
+- Pure functions are side-effect-free; their results are always consumed, never silently discarded
+- Every persisted type round-trips through (de)serialization (JSON via bayan)
+- Feature-gate optional modules (`cyrius build --features <list>`) — consumers pull only what they need
+- Zero panics/aborts in library code — failures propagate via `Result` (`Ok`/`Err`)
+- All persisted types must have (de)serialization roundtrip tests
 - Ark consumes zugot recipes — recipe parsing must be strict and validated
 - Package integrity via SHA-256 verification on every install
 - nous handles all dependency resolution — ark delegates, never reimplements
@@ -135,22 +135,22 @@ Create an ADR when:
 
 ### Guides and Examples
 
-- **Guides** (`docs/guides/`) — written for consumers of this crate. How to integrate, common patterns, migration between versions.
+- **Guides** (`docs/guides/`) — written for consumers of this project. How to integrate, common patterns, migration between versions.
 - **Examples** (`examples/` or `docs/examples/`) — working code with comments explaining *why*, not just *what*. Every public API should have at least one example.
 
 ### Standards and Compliance
 
-- **Standards** (`docs/standards/`) — reference external specifications this crate implements or conforms to. Link to the spec, note the version, document any deviations.
+- **Standards** (`docs/standards/`) — reference external specifications this project implements or conforms to. Link to the spec, note the version, document any deviations.
 - **Compliance** (`docs/compliance/`) — regulatory, licensing, or security compliance documentation. Audit results, certification status, known limitations.
 
-### Source Citations (Required for Science/Math/Domain Crates)
+### Source Citations (Required for Science/Math/Domain Projects)
 
-For crates that implement scientific, mathematical, financial, or domain-specific algorithms:
+For projects that implement scientific, mathematical, financial, or domain-specific algorithms:
 
 **In code** — every algorithm, formula, constant, or domain model must cite its source.
 
 **In docs** — maintain a `docs/sources.md` or `docs/references.md` that lists:
-- Every paper, textbook, or specification the crate draws from
+- Every paper, textbook, or specification the project draws from
 - URLs to freely available versions where possible
 - Which module or function uses which source
 - Why a particular source was chosen over alternatives
