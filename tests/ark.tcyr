@@ -916,6 +916,38 @@ fn test_ark_install_cli() {
     assert(pkg_db_is_installed(amgr_db(mgr), str_from("myapp")), "cli install registered in db");
 }
 
+# Robustness: a materialize that cannot write must report FAILURE, not OK.
+# Regression for the ark v2 M3 on-agnos bug — before the ark_mkdir ABI fix every
+# mkdir failed, so nothing landed, yet install still printed "Installed ... (N
+# files)" and exited 0 because pass-1/pass-2 ignored every return code.
+fn test_ark_install_failure() {
+    test_group("ark_install_failure");
+
+    # Make the install root uncreatable: put a regular FILE in the way, then
+    # point the root at a child of it. Every mkdir under it fails with ENOTDIR,
+    # so no directory or file can be written.
+    xunlink("/tmp/ark-install-fail-blocker.bin");      # clear any stale entry
+    file_write_all("/tmp/ark-install-fail-blocker.bin", "x", 1);
+
+    var cfg = ark_config_default();
+    store64(cfg + 40, str_from("/tmp/ark-failinst-mkt"));
+    store64(cfg + 48, str_from("/tmp/ark-failinst-cache"));
+    store64(cfg + 56, str_from("/tmp/ark-failinst-db.json"));
+    store64(cfg + 64, str_from("/tmp/ark-failinst-txn.log"));
+    var mgr = ark_mgr_new(cfg);
+
+    var res = ark_pkg_install(mgr, "tests/fixtures/sample-signed.ark",
+    "/tmp/ark-install-fail-blocker.bin/root", 1048576);
+
+    # The install must FAIL (not silently report success on a no-op).
+    assert_eq(ares_success(res), 0, "unwritable root -> install fails");
+    assert(str_contains(ares_message(res), str_from("install failed")), "reports failure, not Installed");
+
+    # Nothing registered, nothing materialized.
+    assert(pkg_db_is_installed(amgr_db(mgr), str_from("myapp")) == 0, "failed install registers nothing");
+    assert_eq(file_exists("/tmp/ark-install-fail-blocker.bin/root/usr/bin/app"), 0, "no file materialized on failure");
+}
+
 fn test_marketplace() {
     test_group("marketplace");
 
@@ -1485,6 +1517,7 @@ fn test_main() {
     test_ark_package();
     test_ark_install();
     test_ark_install_cli();
+    test_ark_install_failure();
     test_marketplace();
     test_native_apply();
     test_native_backend();

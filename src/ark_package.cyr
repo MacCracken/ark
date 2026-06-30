@@ -491,7 +491,13 @@ fn apkg_join(root, path) {
 }
 
 # mkdir -p: create every path component of `path` (including itself).
-# Existing dirs (EEXIST) are ignored.
+# Returns 0 when the leaf directory exists at the end (created or pre-existing),
+# -1 when it genuinely could not be created (unwritable root / ENOTDIR). An
+# already-existing dir is NOT a failure, but mkdir's return for that case is
+# target-specific (Linux -EEXIST vs agnos idempotent 0), so a non-zero leaf
+# mkdir is confirmed against the directory actually existing rather than trusted
+# blindly — otherwise a fully-failed install would still report success (the M3
+# `ark_mkdir` ABI bug: every mkdir failed yet install reported OK).
 fn apkg_mkdir_p(path) {
     var n = strlen(path);
     if (n == 0) { return 0; }
@@ -502,17 +508,21 @@ fn apkg_mkdir_p(path) {
     while (i < n) {
         if (load8(buf + i) == 47) {
             store8(buf + i, 0);
-            ark_mkdir(buf, 493);
+            ark_mkdir(buf, 493);          # best-effort ancestor (may already exist)
             store8(buf + i, 47);
         }
         i = i + 1;
     }
-    ark_mkdir(buf, 493);
-    return 0;
+    var r = ark_mkdir(buf, 493);
+    if (r == 0) { return 0; }             # created (or agnos idempotent-existing)
+    if (is_dir(str_from(buf)) == 1) { return 0; }   # Linux -EEXIST: dir is there
+    return 0 - 1;                         # genuine failure: leaf absent
 }
 
 # mkdir -p for the parent directory of a file path (everything up to the
-# last '/'). No-op if the path has no directory component.
+# last '/'). No-op (success) if the path has no directory component. Returns
+# 0 on success, -1 if the parent tree could not be created (propagated from
+# apkg_mkdir_p so the caller can abort instead of writing into a missing dir).
 fn apkg_mkdir_parents(path) {
     var n = strlen(path);
     var last = 0 - 1;
@@ -525,8 +535,7 @@ fn apkg_mkdir_parents(path) {
     var buf = alloc(last + 1);
     memcpy(buf, path, last);
     store8(buf + last, 0);
-    apkg_mkdir_p(buf);
-    return 0;
+    return apkg_mkdir_p(buf);
 }
 
 # Zip-slip / path-traversal guard (CWE-22). A `.ark` entry path is
@@ -555,6 +564,29 @@ fn apkg_path_safe(pathc) {
         i = i + 1;
     }
     return 1;
+}
+
+# Build an install-failure message "<prefix><path>" (cstr prefix + cstr path).
+fn apkg_install_err(prefix, pathc) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, prefix);
+    str_builder_add_cstr(sb, pathc);
+    return str_builder_build(sb);
+}
+
+# Roll back a partial install: unlink every file/symlink already laid down.
+# `files` tracks the root-relative regular-file + symlink paths pushed so far;
+# this is the same vec the upgrade-replace path unlinks. Created directories are
+# left in place (harmless empty dirs) and the package is never registered, so
+# nothing claims them. Called when a pass-1/pass-2 write fails so a failed
+# install does not leave a half-populated tree behind.
+fn ark_install_rollback(files, install_root_cstr) {
+    var ri = 0;
+    while (ri < vec_len(files)) {
+        ark_unlink(apkg_join(install_root_cstr, str_data(vec_get(files, ri))));
+        ri = ri + 1;
+    }
+    return 0;
 }
 
 # Read + verify a `.ark`, lay its files down under `install_root_cstr`
@@ -639,10 +671,30 @@ fn ark_pkg_install_inner(mgr, ark_path_cstr, install_root_cstr, max_len, record_
             var pathc = apkg_afe_path(e);
             var full = apkg_join(install_root_cstr, pathc);
             if (ft == ARK_FT_DIRECTORY) {
-                apkg_mkdir_p(full);
+                if (apkg_mkdir_p(full) != 0) {
+                    ark_install_rollback(files, install_root_cstr);
+                    return ark_result_new(0,
+                    apkg_install_err("ark: install failed — cannot create directory ", pathc),
+                    vec_new(), source);
+                }
             } else {
-                apkg_mkdir_parents(full);
-                file_write_all(full, data + apkg_afe_data_offset(e), apkg_afe_size(e));
+                if (apkg_mkdir_parents(full) != 0) {
+                    ark_install_rollback(files, install_root_cstr);
+                    return ark_result_new(0,
+                    apkg_install_err("ark: install failed — cannot create parent directory for ", pathc),
+                    vec_new(), source);
+                }
+                var wn = file_write_all(full, data + apkg_afe_data_offset(e), apkg_afe_size(e));
+                # A short/negative write means the file did not land in full (open
+                # failed → negative fd, or a partial write). Drop any truncated
+                # remnant, roll back what was written, and fail loud.
+                if (wn != apkg_afe_size(e)) {
+                    ark_unlink(full);
+                    ark_install_rollback(files, install_root_cstr);
+                    return ark_result_new(0,
+                    apkg_install_err("ark: install failed — cannot write ", pathc),
+                    vec_new(), source);
+                }
                 var pstr = str_from(pathc);
                 vec_push(files, pstr);
                 var hh = apkg_afe_sha256(e);
@@ -661,8 +713,21 @@ fn ark_pkg_install_inner(mgr, ark_path_cstr, install_root_cstr, max_len, record_
         if (apkg_afe_file_type(es) == ARK_FT_SYMLINK) {
             var spath = apkg_afe_path(es);
             var sfull = apkg_join(install_root_cstr, spath);
-            apkg_mkdir_parents(sfull);
-            ark_symlink(apkg_afe_symlink_target(es), sfull);
+            if (apkg_mkdir_parents(sfull) != 0) {
+                ark_install_rollback(files, install_root_cstr);
+                return ark_result_new(0,
+                apkg_install_err("ark: install failed — cannot create parent directory for ", spath),
+                vec_new(), source);
+            }
+            # symlink#63 (agnos) / SYS_SYMLINK (host) both return 0 on success,
+            # negative on failure — abort + roll back rather than registering a
+            # symlink that was never created.
+            if (ark_symlink(apkg_afe_symlink_target(es), sfull) != 0) {
+                ark_install_rollback(files, install_root_cstr);
+                return ark_result_new(0,
+                apkg_install_err("ark: install failed — cannot create symlink ", spath),
+                vec_new(), source);
+            }
             vec_push(files, str_from(spath));
             nfiles = nfiles + 1;
         }
