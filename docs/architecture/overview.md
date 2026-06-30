@@ -3,11 +3,23 @@
 ## Module Map
 
 ```
-ark (Cyrius binary, v5.1.3)
-  src/main.cyr      -- All types, engine, CLI parser, config, confirmation
-  tests/ark.tcyr    -- 141 assertions across 9 test groups
-  tests/ark.bcyr    -- 9 benchmarks (manual timing)
-  tests/ark.fcyr    -- Fuzz harness (skeleton)
+ark (Cyrius binary; toolchain cyrius 6.3.5)
+  src/types.cyr       -- constants, enums, struct accessors (ArkConfig, ArkCommand, InstallPlan/Step)
+  src/portable.cyr    -- host/agnos syscall portability shims (ADR 0003)
+  src/output.cyr      -- ArkOutputLine, ArkOutput, rendering
+  src/transaction.cyr -- TransactionOp / Transaction / TransactionLog (JSONL, crash-safe)
+  src/db.cyr          -- PackageDbEntry / PackageDb, integrity, signing, persistent round-trip
+  src/engine.cyr      -- nous glue, ArkPackageManager, command dispatch, upgrade detection
+  src/exec.cyr        -- executor: backend-aware lowering, shakti wrap, exec_plan, native routing
+  src/recipe.cyr      -- zugot recipe parsing (.cyml)
+  src/ark_package.cyr -- `.ark` reader/verify + native install/remove
+  src/marketplace.cyr -- mela marketplace download, resolve-"latest", avail-lookup
+  src/bazaar.cyr      -- community recipe catalog browse
+  src/cli.cyr         -- parse_args, config load, confirmation, main()
+  src/main.cyr        -- include barrel + entrypoint
+  tests/ark.tcyr      -- 399 assertions across the test groups
+  tests/ark.bcyr      -- benchmarks (manual timing)
+  fuzz/ark.fcyr       -- fuzz harnesses (txn-log / pkg-name / CLI / JSON-escape / recipe)
 ```
 
 ## Data Flow
@@ -30,9 +42,17 @@ ark_execute(mgr, cmd)
     |
     +-- hold/unhold --> PackageDb mutation
     |
+    +-- pin/unpin --> PackageDb mutation (version + source pins)
+    |
     +-- verify --> pkg_db_check_integrity
     |
     +-- history --> txn_log_recent
+    |
+    +-- rollback --> ark_rollback (source-aware reverse plan --> executor)
+    |
+    +-- backup/restore --> PackageDb snapshot to/from path
+    |
+    +-- bazaar --> community catalog browse (local)
     |
     v
 ArkResult { success, message, packages_affected, source }
@@ -89,17 +109,17 @@ due to compiler stdin pipe limitation with dot notation.
 
 | Struct | Size | Fields |
 |--------|------|--------|
-| ArkCommand | 72B | tag, packages, query, group, package, source, force, purge, count |
+| ArkCommand | 88B | tag, packages, query, group, package, source, force, purge, count, root, mkt_url |
 | ArkOutputLine | 64B | tag, text, name, version, source, description, key, value |
 | InstallStep | 32B | tag, package, version, purge |
 | InstallPlan | 24B | steps, requires_root, estimated_size_bytes |
 | ArkResult | 32B | success, message, packages_affected, source |
-| ArkConfig | 72B | strategy, confirm_sys, confirm_rm, auto_update, color, mkt_dir, cache_dir, db_path, log_path |
+| ArkConfig | 136B | strategy, confirm_sys, confirm_rm, auto_update, color, mkt_dir, cache_dir, db_path, log_path, shakti_path, apply, trust_keys, require_signed, system_backend, apt_wrapper, native_root, marketplace_url |
 | TransactionOp | 56B | op_type, package, version, source, status, error, from_version |
 | Transaction | 56B | id, started_at, completed_at, status, error_msg, operations, user |
-| TransactionLog | 24B | transactions, next_id, log_path |
-| PackageDbEntry | 88B | name, version, source, installed_at, installed_by, size_bytes, checksum, files, dependencies, transaction_id, held |
-| PackageDb | 16B | packages (hashmap), db_path |
+| TransactionLog | 32B | transactions, next_id, log_path, index |
+| PackageDbEntry | 128B | name, version, source, installed_at, installed_by, size_bytes, checksum, files, dependencies, transaction_id, held, file_checksums, signature, signer_key_id, pinned_version, pinned_source |
+| PackageDb | 24B | packages (hashmap), db_path, loaded_ok |
 | NousResolver | 24B | marketplace_dir, cache_dir, strategy |
 | ArkPackageManager | 32B | config, resolver, package_db, transaction_log |
 
@@ -107,8 +127,8 @@ due to compiler stdin pipe limitation with dot notation.
 
 | Source | Resolution | Install Method |
 |--------|-----------|----------------|
-| System | nous checks apt cache | apt-get install via shakti |
-| Marketplace | nous checks marketplace index | Download + verify + extract |
+| System | nous checks apt cache (`apt`/`apt-agnos`) or native index (`native`) | backend-aware (ADR 0002): `apt-get` via shakti, wrapper-fronted apt, or ark's native `.ark` installer |
+| Marketplace | nous checks marketplace index | Download + verify + extract → PackageDb |
 | FlutterApp | nous checks flutter registry | agpkg install |
 | Community | nous resolves from community repo | Build locally via takumi |
 
@@ -123,9 +143,20 @@ due to compiler stdin pipe limitation with dot notation.
 
 ## Dependencies
 
-- **nous** -- Dependency resolution (stubbed until ported to Cyrius)
-- **stdlib** (18 modules) -- string, fmt, alloc, vec, str, syscalls, io,
-  args, assert, hashmap, tagged, toml, json, fs, fnptr, callback, bench, regex
+ark consumes single-file `dist/*.cyr` library bundles (pinned in `cyrius.lock`)
+plus the Cyrius stdlib. It never reimplements resolution, crypto, or transport.
+
+- **nous** (1.3.0) -- Dependency resolution across system / marketplace /
+  flutter / community; pluggable `resolver_check_updates` for update detection.
+- **sigil** (3.9.7) -- SHA-256 + Ed25519 (package integrity & signatures).
+- **mela** (1.0.1) -- Marketplace client (download, `/latest` resolve) +
+  publisher keyring (the trust set for signature verification).
+- **sandhi** (1.7.0) -- HTTP/TLS transport for marketplace downloads (direct
+  dep; also pulled transitively by mela).
+- **agnostik** (1.3.1) -- Shared AGNOS manifest types (direct dep; also mela's).
+- **stdlib** (`bayan` TOML/JSON, `sankoch` DEFLATE, `bench`, etc.) -- string,
+  fmt, alloc, vec, str, syscalls, io, args, assert, hashmap, tagged, toml, json,
+  fs, fnptr, callback, bench, regex.
 
 ## Consumers
 

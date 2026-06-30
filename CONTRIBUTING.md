@@ -2,45 +2,60 @@
 
 Thank you for your interest in contributing to Ark, the AGNOS package manager.
 
+Ark is written in **[Cyrius](https://github.com/MacCracken/cyrius)** — it has
+been pure Cyrius since v0.8.0 (no Cargo/Rust). The build, test, lint, and
+benchmark tooling is all the `cyrius` CLI.
+
 ## Getting Started
 
-1. Clone the repository and its sibling crate `nous`:
+1. Clone the repository:
    ```bash
    git clone https://github.com/MacCracken/ark.git
-   git clone https://github.com/MacCracken/nous.git
    ```
 
-2. Ensure you have Rust 1.89+ installed:
+2. Install the pinned cyrius toolchain (see `.cyrius-toolchain` / `cyrius.cyml` —
+   currently **6.3.5**). Dependencies (sigil, nous, mela, agnostik, sandhi)
+   resolve automatically from `cyrius.cyml` / `cyrius.lock` as `dist/*.cyr`
+   bundles; you do **not** need to clone them. The `path = "../<dep>"` entries in
+   the manifest are optional local-dev overrides.
+
+3. Build and run the test suite:
    ```bash
-   rustup update stable
+   cyrius build -D ARK_MAIN src/main.cyr build/ark            # host build
+   cyrius build -D ARK_MAIN --agnos src/main.cyr build/ark    # AGNOS cross-build
+   cyrius test tests/ark.tcyr
    ```
 
-3. Run the test suite:
+4. Run the cleanliness checks (or `cyrius audit` for the full project sweep —
+   fmt/lint/docs/tests/bench):
    ```bash
-   cargo test
+   cyrius fmt src/main.cyr --check
+   cyrius lint src/main.cyr
+   cyrius vet src/main.cyr
+   cyrius deny src/main.cyr
    ```
 
-4. Run the full cleanliness check:
+5. Run benchmarks and fuzzers:
    ```bash
-   cargo fmt --check
-   cargo clippy --all-features --all-targets -- -D warnings
-   cargo audit
-   cargo deny check
-   RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps
+   cyrius bench tests/ark.bcyr
+   cyrius fuzz                  # runs fuzz/*.fcyr harnesses
    ```
 
 ## Development Process
 
-See [CLAUDE.md](CLAUDE.md) for the full development process, including the Work Loop and P(-1) Scaffold Hardening procedures.
+See [CLAUDE.md](CLAUDE.md) for the full development process, including the Work
+Loop and P(-1) Scaffold Hardening procedures.
 
 ### Key Rules
 
-- Every public enum must have `#[non_exhaustive]`
-- Every pure function must have `#[must_use]`
-- Every type must be `Serialize + Deserialize` with a roundtrip test
-- Zero `unwrap`/`panic` in library code
-- Never skip benchmarks before claiming performance improvements
+- Public enums are `#[non_exhaustive]`-equivalent — forward-compatible (new
+  variants must not break consumers)
+- Every type round-trips through serialization, with a roundtrip test
+- Zero `unwrap`/`panic` in library code — failures return a `Result`
+- Package integrity is verified (SHA-256 root hash + Ed25519 signature +
+  per-file hashes) on **every** install; never bypass it
 - Dependency resolution belongs in `nous`, not in `ark`
+- Never skip benchmarks before claiming performance improvements
 
 ## Submitting Changes
 
@@ -57,7 +72,7 @@ Please open an issue on GitHub with:
 - A clear description of the problem
 - Steps to reproduce
 - Expected vs actual behavior
-- Rust version and platform
+- cyrius toolchain version and platform
 
 ## License
 

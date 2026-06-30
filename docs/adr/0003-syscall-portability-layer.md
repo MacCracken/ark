@@ -51,7 +51,8 @@ and to the AGNOS-correct form under `#ifdef CYRIUS_TARGET_AGNOS`:
 Key points:
 
 - **The host path is byte-identical.** Each shim inlines to the exact syscall
-  ark issued before, so x86_64 behavior and the 337-test suite are unchanged.
+  ark issued before, so x86_64 behavior and the host test suite (337 at 1.1.0;
+  399 as of 1.1.3) are unchanged.
 - **`ark_symlink` returns `-1` on AGNOS** rather than calling an undefined
   symbol. This is what makes the AGNOS cross-build *link*, and it makes a `.ark`
   carrying a symlink entry **fail clean** on AGNOS (caller checks the result)

@@ -54,13 +54,16 @@ marketplace rather than on disk:
 
 ```bash
 $ ark install myapp@2.1.0 --marketplace https://market.agnos.org/
+$ ark install myapp --marketplace https://market.agnos.org/   # omit @version → resolve "latest"
 ```
 
 ark builds a mela client (`registry_client_new`) and calls `mela_fetch_artifact`
 to download the `.ark` into its cache (mela validates the name/version + builds
 the URL; sandhi provides the HTTP/TLS transport), then runs the **exact same**
 verify → materialize → register flow as the local install above. A cache hit
-(the `.ark` already in the cache dir) skips the network.
+(the `.ark` already in the cache dir) skips the network. Omitting `@version`
+resolves the latest published version first
+(`ark_marketplace_resolve_latest`, mela's manifest endpoint) and installs that.
 
 ## 4. Verify an installed package later
 
@@ -69,7 +72,11 @@ $ ark verify myapp
 ```
 
 re-reads the files recorded in `PackageDb` and re-computes their SHA-256, so you
-can detect corruption or tampering after the fact.
+can detect corruption or tampering after the fact. `PackageDb` is the
+**authoritative, persistent** native store (schema v3 — it round-trips version,
+files, per-file hashes, holds, and pins to disk), which is why this `ark verify`
+works in a *separate, later* CLI invocation: the registration from step 2
+survives across processes.
 
 ## Notes
 

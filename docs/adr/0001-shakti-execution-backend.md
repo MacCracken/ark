@@ -1,6 +1,6 @@
 # 0001 — Execution backend via shakti
 
-- **Status**: accepted (review; implementation pending)
+- **Status**: accepted; **implemented** — the executor has been live since 0.8.3 (`src/exec.cyr`: plan → shakti → system, dry-run/apply, transaction recording). On-hardware `--apply` against a real setuid shakti remains an AGNOS-track item.
 - **Date**: 2026-06-16
 - **Deciders**: ark maintainers
 
@@ -16,7 +16,8 @@ stdlib but is never called from `src/`. The plan carries an
 
 Installing system packages, writing under `/usr`, `/etc`, and the package
 database requires root. ark must not itself be setuid. AGNOS already
-ships **shakti** (0.7.0, Cyrius, pinned to the same toolchain 6.2.12) — a
+ships **shakti** (0.7.0, Cyrius, pinned to the same cyrius toolchain — 6.3.5 as
+of 1.1.x) — a
 `sudo`/`doas`-class privilege-escalation tool with PAM auth, a TOML
 policy (`/etc/agnos/sudoers.toml`), audit logging, environment
 sanitization, capability-based least-privilege, and a per-TTY credential

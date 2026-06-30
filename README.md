@@ -1,6 +1,6 @@
 # Ark
 
-**Ark** — Unified package manager for AGNOS. (v1.0.0 — Cyrius port complete.)
+**Ark** — Unified package manager for AGNOS. (v1.1.3 — system-backend seam + native `.ark` installer + real `ark upgrade`.)
 
 The vessel that carries the [zugot](https://github.com/MacCracken/zugot) (recipes) and builds the world from their definitions. Named after the ark that preserves knowledge through destruction.
 
@@ -17,17 +17,17 @@ Ark is **plan-first**: `install`/`remove` resolve and show a plan by default and
 ark install <package>              # resolve + show the plan (nothing runs)
 ark install <package> --apply      # execute (prompts to confirm)
 ark install <package> --dry-run    # show the exact commands it would run
-ark install --group <group>        # a package group (e.g., agnos-desktop)
+ark install --group <group>        # a package group (e.g., desktop → agnos-desktop)
 ark install ./pkg.ark [--root DIR] # install a local .ark (verify → materialize)
 ark install name[@ver] --marketplace <url>  # marketplace install (omit @ver to resolve "latest")
 ark install <package> --system-backend native   # apt | apt-agnos | native (ADR 0002)
 
 ark remove <package> [--purge] [--apply]    # remove (and optionally its config)
 ark search <query>                 # search across sources
-ark list [--source marketplace]    # installed packages (--system / --flutter filters)
+ark list [--marketplace]           # installed packages (--system / --flutter / --marketplace filters)
 ark info <package>                 # package details
-ark update                         # refresh package indices
-ark upgrade [<package>]            # upgrade all / specific packages
+ark update                         # check for updates (apt + marketplace, when marketplace_url set)
+ark upgrade [<package>]            # upgrade all / specific pkgs — honors --dry-run/--apply, holds & pins; detects marketplace updates
 ark status                         # version, strategy, dirs
 ark verify [<package>]             # re-check installed files vs stored SHA-256
 ark history [count]                # recent transactions
@@ -48,8 +48,14 @@ ark bazaar <subcmd> <query>        # browse the community catalog
 User → ark (CLI/API)
          ├── nous (resolver) → dependency graph
          ├── zugot (recipes) → build instructions
-         └── InstallPlan → shakti (privilege) → execution
+         └── InstallPlan ──┬── system step → shakti (privilege) → apt-get / wrapper
+                           └── native/marketplace step → exec_native_step
+                                  → verify → materialize → PackageDb
 ```
+
+Privileged system steps escalate through shakti; native and marketplace steps
+run through ark's own `.ark` installer into the authoritative `PackageDb`.
+Syscall-divergent paths route through `src/portable.cyr` (ADR 0003).
 
 ### Key Design Decisions
 
@@ -62,7 +68,7 @@ User → ark (CLI/API)
 
 | Source | Description | Install Method |
 |--------|-------------|----------------|
-| **System** | Base OS packages | `apt-get` via shakti today; native `.ark` store is the v2 direction (see roadmap / ADR 0002) |
+| **System** | Base OS packages | backend-selectable (`--system-backend`, ADR 0002): `apt-get` via shakti (default on Debian), wrapper-fronted `apt-agnos`, or the native `.ark` store (default on AGNOS) |
 | **Marketplace** | AGNOS apps & agents from [mela](https://github.com/MacCracken/mela) | download signed `.ark` (verify root hash + trusted Ed25519 signer) → install |
 | **Bazaar** | Community-contributed packages | `ark bazaar` (catalog browse) |
 
@@ -111,8 +117,8 @@ single-file `dist/*.cyr` library bundles plus the Cyrius stdlib (`bayan`,
 | [nous](https://github.com/MacCracken/nous) | Dependency resolution (system / marketplace / Flutter) |
 | [sigil](https://github.com/MacCracken/sigil) | SHA-256 + Ed25519 (integrity & signatures) |
 | [mela](https://github.com/MacCracken/mela) | Marketplace client (download) + publisher keyring |
-| sandhi (via mela) | HTTP/TLS transport for marketplace downloads |
-| agnostik (via mela) | Shared AGNOS manifest types |
+| [sandhi](https://github.com/MacCracken/sandhi) | HTTP/TLS transport for marketplace downloads (direct dep; also mela's) |
+| [agnostik](https://github.com/MacCracken/agnostik) | Shared AGNOS manifest types (direct dep; also mela's) |
 | `bayan` / `sankoch` (stdlib) | TOML/JSON + DEFLATE for `.ark` |
 
 ## Package Groups
@@ -125,6 +131,29 @@ Ark supports meta-package groups for bulk installation:
 | `ai` / `ml` | `agnos-ai` |
 | `shell` | `agnoshi` |
 | `edge` / `iot` | `agnos-edge-agent` |
+
+## Configuration
+
+Ark reads an optional TOML config. Search order (first match wins, then
+built-in defaults):
+
+1. `$ARK_CONFIG`
+2. `./ark.toml`
+3. `~/.config/ark/ark.toml`
+4. `/etc/agnos/ark.toml`
+
+User-writable sources (1–3) are skipped when running as root (euid 0), so a
+privileged invocation only honors `$ARK_CONFIG` and `/etc/agnos/ark.toml`.
+
+| Key | Meaning |
+|-----|---------|
+| `color_output` | ANSI color (bool) |
+| `confirm_system_installs` / `confirm_removals` | prompt before applying (bool) |
+| `auto_update_check` | check for updates on relevant commands (bool) |
+| `marketplace_dir` / `cache_dir` | local marketplace + download cache dirs |
+| `system_backend` | `apt` \| `apt-agnos` \| `native` — mirrors `--system-backend` (ADR 0002; default `native` on AGNOS) |
+| `apt_wrapper` | command that fronts apt under the `apt-agnos` backend |
+| `marketplace_url` | base URL for marketplace update detection; **empty (default) ⇒ `ark update`/`ark upgrade` stay apt-only and make no network calls** |
 
 ## Related
 

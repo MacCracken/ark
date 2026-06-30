@@ -1,10 +1,17 @@
 # 0002 — Package source model: pluggable system backend, apt-compat bridge, native target
 
-- **Status**: accepted (direction); native backend deferred to v2
+- **Status**: accepted; **seam + native backend shipped in 1.1.0** (M0–M2). The
+  three-mode `system_backend` (`apt`/`apt-agnos`/`native`) is wired through
+  `ArkConfig` + `exec.cyr`'s `step_to_argv_be`; `native` installs from ark's
+  `PackageDb` store and is the default on AGNOS. The native **producer** chain —
+  nous's `SOURCE_NATIVE` resolver + signed index — is still pending (the store is
+  the ready consumer); the `apt-agnos` wrapper bridge awaits AGNOS hardware. See
+  the roadmap's AGNOS / sovereignty track.
 - **Date**: 2026-06-17
 - **Deciders**: ark maintainers
 - **Related**: [ADR 0001 — Execution backend via shakti](0001-shakti-execution-backend.md);
-  roadmap "v2.0 — Native, apt-independent package management"
+  [ADR 0003 — Syscall portability layer](0003-syscall-portability-layer.md);
+  roadmap "AGNOS / sovereignty track"
 
 ## Context
 
