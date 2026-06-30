@@ -510,13 +510,93 @@ fn ark_update(mgr) {
     return output;
 }
 
+# nous "update" object accessors — mirror nous's update struct layout (see
+# update_to_json in nous): name(0) source(8) installed_version(16)
+# available_version(24) changelog(32).
+fn nupd_name(u) { return load64(u); }
+fn nupd_source(u) { return load64(u + 8); }
+fn nupd_installed(u) { return load64(u + 16); }
+fn nupd_available(u) { return load64(u + 24); }
+
+# True (1) when Str `name` equals any Str in `vec`.
+fn name_in_vec(vec, name) {
+    var i = 0;
+    while (i < vec_len(vec)) {
+        if (str_eq(vec_get(vec, i), name) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Build an upgrade InstallPlan from a list of nous updates: one install step per
+# update at its available version, lowered by source (the system/native command
+# is chosen backend-aware in exec.cyr). Held packages are skipped; when
+# `packages` is non-empty, only those names are included.
+fn ark_build_upgrade_plan(mgr, updates, packages) {
+    var plan = install_plan_new();
+    var steps = iplan_steps(plan);
+    var db = amgr_db(mgr);
+    var filter = (vec_len(packages) > 0);
+    var i = 0;
+    while (i < vec_len(updates)) {
+        var u = vec_get(updates, i);
+        var name = nupd_name(u);
+        var av = nupd_available(u);
+        var src = nupd_source(u);
+        # Skip ark-managed packages that are held, or whose version/source pin
+        # the upgrade would violate. (These gate ark-managed packages only —
+        # apt/system packages aren't in PackageDb, so apt's own apt-mark governs
+        # their holds; and enforcement across CLI processes is gated on the
+        # PackageDb reload follow-up, see roadmap.)
+        var skip = (pkg_db_is_held(db, name) == 1);
+        if (skip == 0) {
+            if (pkg_db_upgrade_allowed(db, name, av, src) == 0) { skip = 1; }
+        }
+        if (skip == 0) {
+            var include = 1;
+            if (filter == 1) { include = name_in_vec(packages, name); }
+            if (include == 1) {
+                if (src == SOURCE_MARKETPLACE || src == SOURCE_COMMUNITY) {
+                    vec_push(steps, step_marketplace_install(name, av));
+                } elif (src == SOURCE_FLUTTER_APP) {
+                    vec_push(steps, step_flutter_install(name, av));
+                } else {
+                    vec_push(steps, step_system_install(name, av));
+                    iplan_set_root(plan, 1);
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return plan;
+}
+
+# Upgrade installed packages to their available versions. Real apply (M4 host
+# slice): builds a backend-aware plan (apt-get pkg=ver, or the native `.ark`
+# installer under BACKEND_NATIVE) and runs it through the executor — `--apply`
+# upgrades in a rollback-able transaction, `--dry-run` shows the commands, and
+# plan-only (default) just describes. Update detection comes from nous
+# (apt-system today; native/marketplace detection is a nous producer gate).
 fn ark_upgrade(mgr, packages) {
     var updates = nous_check_updates(amgr_resolver(mgr));
+    var plan = ark_build_upgrade_plan(mgr, updates, packages);
+    var steps = iplan_steps(plan);
+    if (vec_len(steps) == 0) {
+        return ark_result_new(1, str_from("Nothing to upgrade (up to date, held, or filtered out)"),
+        vec_new(), SOURCE_UNKNOWN);
+    }
+    var affected = vec_new();
+    var i = 0;
+    while (i < vec_len(steps)) {
+        vec_push(affected, istep_pkg(vec_get(steps, i)));
+        i = i + 1;
+    }
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "Upgrade plan: ");
-    str_builder_add_int(sb, vec_len(updates));
-    str_builder_add_cstr(sb, " package(s) to upgrade");
-    return ark_result_new(1, str_builder_build(sb), vec_new(), SOURCE_UNKNOWN);
+    str_builder_add_int(sb, vec_len(steps));
+    str_builder_add_cstr(sb, " package(s)");
+    var described = ark_result_new(1, str_builder_build(sb), affected, SOURCE_UNKNOWN);
+    return ark_apply_or_describe(mgr, plan, described);
 }
 
 fn ark_status(mgr) {

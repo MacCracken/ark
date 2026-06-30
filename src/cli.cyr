@@ -106,7 +106,10 @@ fn parse_args(ac, av) {
         var i = cmd_idx + 1;
         while (i < ac) {
             var arg = argv(i);
-            if (load8(arg) != 45) { vec_push(acmd_packages(c), str_from(arg)); }
+            # --system-backend takes a value — skip it so the value isn't read
+            # as a package name. --apply/--dry-run are bare flags (skipped below).
+            if (streq(arg, "--system-backend")) { i = i + 1; }
+            elif (load8(arg) != 45) { vec_push(acmd_packages(c), str_from(arg)); }
             i = i + 1;
         }
         return c;
@@ -342,6 +345,25 @@ fn needs_confirmation(cmd, config) {
                 i = i + 1;
             }
             str_builder_add_cstr(sb, "?");
+            return str_builder_build(sb);
+        }
+    }
+    if (tag == CMD_UPGRADE) {
+        if (acfg_confirm_sys(config)) {
+            var sb = str_builder_new();
+            var pkgs = acmd_packages(cmd);
+            if (vec_len(pkgs) == 0) {
+                str_builder_add_cstr(sb, "Upgrade all available packages?");
+            } else {
+                str_builder_add_cstr(sb, "Upgrade ");
+                var i = 0;
+                while (i < vec_len(pkgs)) {
+                    if (i > 0) { str_builder_add_cstr(sb, ", "); }
+                    str_builder_add(sb, vec_get(pkgs, i));
+                    i = i + 1;
+                }
+                str_builder_add_cstr(sb, "?");
+            }
             return str_builder_build(sb);
         }
     }

@@ -613,6 +613,19 @@ fn ark_pkg_install_inner(mgr, ark_path_cstr, install_root_cstr, max_len, record_
         gi = gi + 1;
     }
 
+    # Upgrade-replace: if a previous version of this package is registered,
+    # unlink its owned files first so an upgrade doesn't orphan files the new
+    # version no longer ships (shared paths are re-materialized in pass 1).
+    var prev = pkg_db_get(amgr_db(mgr), str_data(name));
+    if (prev != 0) {
+        var pvf = pdbe_files(prev);
+        var pvi = 0;
+        while (pvi < vec_len(pvf)) {
+            ark_unlink(apkg_join(install_root_cstr, str_data(vec_get(pvf, pvi))));
+            pvi = pvi + 1;
+        }
+    }
+
     # Pass 1 — directories + regular/config files. Symlinks are deferred to
     # pass 2 so a malicious symlink entry can't be planted and then have a
     # later same-archive write redirected through it (audit #5): when these

@@ -5,6 +5,69 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.1.1] - 2026-06-29 — M4 (host slice): real `ark upgrade`
+
+Turns `ark upgrade` from a plan-display stub into a real **apply-on-native**
+upgrade — the un-gated, host-side half of M4. The whole-system atomic image
+swap stays gated on the agnos boot-slot primitive (agnos 1.51.x (b)); this is
+the per-package upgrade path, which rides the 1.1.0 machinery (the native `.ark`
+installer + plan-wide transaction + source-aware `ark_rollback`) — an engine
+swap under the already-proven package chassis.
+
+### Changed
+
+- **`ark upgrade` now applies.** It builds a real `InstallPlan` from the
+  available updates (`ark_build_upgrade_plan`) and runs it through the executor:
+  `--dry-run` shows the concrete commands, `--apply` upgrades in a rollback-able
+  transaction, plan-only (default) describes. **Backend-aware** (ADR 0002): each
+  update lowers to `apt-get install pkg=<available>` under `apt`, or the native
+  `.ark` installer under `native` — so the same command follows the sovereignty
+  cutover with no code change. Drops **held** and **pin-violating** ark-managed
+  packages from the set (`pkg_db_is_held` / `pkg_db_upgrade_allowed`), and honors
+  the **package filter** (`ark upgrade nginx curl` upgrades only those; bare
+  `ark upgrade` does all). Source-aware step kinds mirror `ark install`.
+
+### Added
+
+- `pkg_db_is_held`, the nous update-object accessors (`nupd_*`), and `name_in_vec`.
+- `CMD_UPGRADE` is covered by `needs_confirmation`, so a real `--apply` upgrade
+  prompts (gated on `confirm_system_installs`).
+- +20 upgrade tests (366 total): plan from updates, held-skip, pin-skip, package
+  filter, source-aware + backend-aware lowering, empty-updates → empty plan, and
+  upgrade-replace (no orphaned files).
+
+### Fixed
+
+- **`ark upgrade --system-backend <mode>`** no longer treats the mode value as a
+  package to upgrade (the upgrade arg parser now skips the flag's value).
+- **Version/source pins are enforced on upgrade.** `ark_build_upgrade_plan` now
+  calls `pkg_db_upgrade_allowed` (previously dead code), so a pinned ark-managed
+  package isn't moved off its pin by an upgrade.
+- **Native upgrade no longer orphans the prior version's files.**
+  `ark_pkg_install_inner` unlinks a previously-registered package's owned files
+  before laying down the new version (shared paths are re-materialized), so files
+  the new version drops don't linger.
+
+### Notes
+
+- **Update detection is apt-system today.** `nous_check_updates` parses
+  `apt list --upgradable` (`sysdb_updates`), so on a Debian/apt host `ark upgrade`
+  really upgrades; on agnos (no apt) it finds nothing until nous ships
+  native/marketplace update detection (the same M2 producer gate). The
+  apply/rollback mechanism is in place regardless of detection source.
+- **Holds/pins gate ark-managed (native/marketplace) packages only.** apt/system
+  packages live in dpkg, not ark's `PackageDb`, so ark can't hold/pin them —
+  apt's own `apt-mark` is the mechanism there. And because `pkg_db_load` does not
+  yet reconstruct entries (the pre-existing reload follow-up), hold/pin state set
+  in one CLI process is not yet seen by a later `ark upgrade` process; the
+  skip-logic is correct and becomes effective once that reload lands. The
+  package **filter** works regardless (it needs no DB).
+- **Rollback of an upgrade reverts the install (removes the package)** rather
+  than restoring the prior version — `ark_rollback` reverses install→remove.
+  True downgrade-to-previous needs from-version tracking on the step/op (the
+  `OP_UPGRADE` + `from_version` slots exist) plus the prior artifact cached;
+  noted as a follow-up.
+
 ## [1.1.0] - 2026-06-29 — AGNOS compatibility: the host-side AGNOS track (M0–M3)
 
 Brings up ark's share of the 1.1.x AGNOS track end to end on the host — the

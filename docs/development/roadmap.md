@@ -186,6 +186,26 @@ planned, not dropped).
 - [x] 346 tests (+54: M0 +26, M1 +9, M2 +8, M3 +5, review-fix regressions +6), bench + fuzz green; host **and** agnos builds clean. Adversarially reviewed; 7 correctness findings fixed (source attribution, durable saves, full-source rollback, version-carrying remove, portable open, CLI/validation).
 - [ ] **Follow-up (pre-existing, discovered in review): `PackageDb` does not reload from disk.** `pkg_db_save` writes correct JSON but `pkg_db_load` never reconstructs the `packages` object (reads only `schema_version`), so the installed-set doesn't survive across CLI processes. Predates 1.1.0 (affected pin/hold too). Blocked on a working object parser — the bundled DOM parser `json_v_parse` returns 0 in-build; only the flat key→string parser works. Needed before the native store is truly authoritative across processes / on-agnos.
 
+### v1.1.1 (2026-06-29) — M4 host slice: real `ark upgrade`
+
+- [x] **`ark upgrade` is real apply-on-native** (M4 host slice). Builds a
+  backend-aware `InstallPlan` from the available updates
+  (`ark_build_upgrade_plan`), drops **held** + **pin-violating** ark-managed
+  packages and honors a **package filter**, and runs through the executor in a
+  rollback-able transaction — `--apply` upgrades (apt `pkg=ver` or the native
+  `.ark` installer per `system_backend`), `--dry-run` shows the commands,
+  plan-only describes. Source-aware step kinds mirror `ark install`. Added
+  `pkg_db_is_held`, `nupd_*`, `name_in_vec`; `CMD_UPGRADE` now prompts under
+  `--apply`. **Adversarially reviewed; fixes:** enforce version/source pins
+  (`pkg_db_upgrade_allowed`, was dead code); native upgrade no longer orphans the
+  prior version's files; upgrade parser no longer eats `--system-backend`'s
+  value. +20 tests (366 total); host + agnos builds, bench, fuzz green.
+- [ ] *Still open (M4):* whole-system atomic image swap (agnos boot-slot gate,
+  1.51.x (b)); native/marketplace update **detection** (nous producer gate);
+  downgrade-on-rollback (vs remove). **Holds/pins gate ark-managed packages
+  only** (apt uses `apt-mark`) and need the `pkg_db_load` reload follow-up to
+  persist across CLI processes.
+
 ### Capability inventory (verified against code 2026-06-16)
 
 These were on the backlog but are implemented and tested in the tree today:
@@ -316,7 +336,17 @@ ark's share of the arc (ark drives; resolution stays in nous; build in takumi):
 - [x] **M1 — wire resolved steps → the native `.ark` installer** — **shipped in 1.1.0**. `exec_plan` routes marketplace/native steps to ark's installer/remover, plan-txn rollback, source-aware reverse, resolve-"latest" via mela. *(Still open: auto-**download** of a resolved-but-uncached package from a configured default marketplace.)*
 - [x] **M2 — native backend + authoritative store (ark's share)** — **shipped in 1.1.0**. `BACKEND_NATIVE` lowering + `PackageDb` as the authoritative store; agnos defaults to native. **Producer gate (nous, still open):** the `SOURCE_NATIVE` resolver + signed index + lockfile do not exist in nous 1.2.7 — ark is the wired-and-ready consumer; the resolver half lands when nous ships it (and the store stays empty until takumi builds a real zugot recipe → `.ark` and indexes it).
 - [x] **M3 — syscall portability triage (host-side)** — **shipped in 1.1.0**. `src/portable.cyr` `#ifdef` shims; the **agnos cross-build now compiles**, host byte-identical. **Still open (deferred):** on-agnos QEMU+iron runtime validation (compiling ≠ working); symlink-bearing `.ark` is rejected on agnos until the symlink syscall lands (agnos 1.51.x (a)).
-- [ ] **M4 — AGNOS-side update mechanism (ark's share; server).** Turn `ark_update`/`ark_upgrade` from plan-display into real **apply-on-native** that re-materializes from verified `.ark` with a rollback-able transaction (rides the present crash-safe ext2/4 + ark txn log + `ark_rollback`). **Gated on an agnos/gnoboot boot-slot or atomic-image-swap primitive (absent — filed agnos 1.51.x (b))**; the A/B-slot-vs-in-place model is an open design call.
+- [~] **M4 — AGNOS-side update mechanism (ark's share; server).** *Host slice
+  shipped in 1.1.1*: `ark upgrade` is real **apply-on-native** — builds a
+  backend-aware plan from the available updates (`ark_build_upgrade_plan`),
+  respects holds + a package filter, and runs it through the executor in a
+  rollback-able transaction (rides the 1.1.0 native installer + ark txn log +
+  source-aware `ark_rollback`). *Still open*: the **whole-system atomic image
+  swap** (re-materialize the system image) is **gated on an agnos/gnoboot
+  boot-slot or atomic-image-swap primitive (absent — filed agnos 1.51.x (b))**;
+  the A/B-slot-vs-in-place model is an open design call. Update *detection* for
+  native/marketplace sources is the nous producer gate (apt-system detection
+  works today); true downgrade-on-rollback (vs remove) is a follow-up.
 - [ ] **Compat & migration**: apt demoted to `--source apt`; one-time dpkg-set import into the native store (Debian-host convenience).
 
 > **Not ark's milestones** (tracked in their repos, listed here for the chain):

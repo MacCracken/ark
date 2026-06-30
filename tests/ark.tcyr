@@ -1106,6 +1106,105 @@ fn test_rollback_sources() {
     assert_eq(str_contains(ares_message(rb), str_from("apt-get")), 0, "flutter rollback does not use apt");
 }
 
+# M4 (1.1.1) — real ark_upgrade: build a backend-aware plan from nous updates,
+# respecting holds + the package filter. (Detection via nous_check_updates is
+# apt-host-dependent, so we test the deterministic plan-builder directly.)
+fn mk_update(name, src, iv, av) {
+    var u = alloc(40);
+    store64(u, name);
+    store64(u + 8, src);
+    store64(u + 16, iv);
+    store64(u + 24, av);
+    store64(u + 32, 0);
+    return u;
+}
+
+fn test_upgrade() {
+    test_group("upgrade");
+
+    var cfg = ark_config_default();
+    store64(cfg + 56, str_from("/tmp/ark-up-db.json"));
+    store64(cfg + 64, str_from("/tmp/ark-up-txn.log"));
+    var mgr = ark_mgr_new(cfg);
+
+    var updates = vec_new();
+    vec_push(updates, mk_update(str_from("nginx"), SOURCE_SYSTEM, str_from("1.0"), str_from("1.2")));
+    vec_push(updates, mk_update(str_from("curl"), SOURCE_SYSTEM, str_from("7.0"), str_from("8.0")));
+
+    # No filter, no holds -> both update at their available version.
+    var plan = ark_build_upgrade_plan(mgr, updates, vec_new());
+    var steps = iplan_steps(plan);
+    assert_eq(vec_len(steps), 2, "both updates planned");
+    var s0 = vec_get(steps, 0);
+    assert_eq(istep_tag(s0), STEP_SYSTEM_INSTALL, "system install step");
+    assert(str_eq(istep_pkg(s0), str_from("nginx")), "step pkg");
+    assert(str_eq(istep_ver(s0), str_from("1.2")), "step at available version");
+    # backend-aware: apt pins pkg=available; native routes to the installer.
+    var av = step_to_argv_be(s0, BACKEND_APT, str_from("apt-agnos"));
+    assert(str_eq(vec_get(av, 3), str_from("nginx=1.2")), "apt upgrade pins available version");
+    assert_eq(step_to_argv_be(s0, BACKEND_NATIVE, str_from("apt-agnos")), 0, "native upgrade routes to installer");
+
+    # Filter: only the named package.
+    var pf = vec_new();
+    vec_push(pf, str_from("curl"));
+    var planf = ark_build_upgrade_plan(mgr, updates, pf);
+    assert_eq(vec_len(iplan_steps(planf)), 1, "filter limits to named package");
+    assert(str_eq(istep_pkg(vec_get(iplan_steps(planf), 0)), str_from("curl")), "filtered to curl");
+
+    # Hold: a held package is skipped.
+    var e = db_entry_new(str_from("nginx"), str_from("1.0"), SOURCE_SYSTEM);
+    pkg_db_register(amgr_db(mgr), e);
+    pkg_db_hold(amgr_db(mgr), str_from("nginx"));
+    var planh = ark_build_upgrade_plan(mgr, updates, vec_new());
+    assert_eq(vec_len(iplan_steps(planh)), 1, "held package skipped");
+    assert(str_eq(istep_pkg(vec_get(iplan_steps(planh), 0)), str_from("curl")), "only curl after hold");
+
+    # Pin: curl pinned to 7.0 -> an upgrade to 8.0 violates the pin and is skipped
+    # (nginx still held), so the plan is empty.
+    var ce = db_entry_new(str_from("curl"), str_from("7.0"), SOURCE_SYSTEM);
+    pkg_db_register(amgr_db(mgr), ce);
+    pkg_db_pin_version_to(amgr_db(mgr), str_from("curl"), str_from("7.0"));
+    var planp = ark_build_upgrade_plan(mgr, updates, vec_new());
+    assert_eq(vec_len(iplan_steps(planp)), 0, "held + pin-violating updates both skipped");
+
+    # Source-aware: a marketplace update lowers to a marketplace (native) step.
+    var mu = vec_new();
+    vec_push(mu, mk_update(str_from("agent"), SOURCE_MARKETPLACE, str_from("1.0"), str_from("2.0")));
+    var planm = ark_build_upgrade_plan(mgr, mu, vec_new());
+    assert_eq(istep_tag(vec_get(iplan_steps(planm), 0)), STEP_MARKETPLACE_INSTALL, "marketplace update -> marketplace step");
+
+    # No updates -> empty plan (ark_upgrade then reports "nothing to upgrade").
+    assert_eq(vec_len(iplan_steps(ark_build_upgrade_plan(mgr, vec_new(), vec_new()))), 0, "no updates -> empty plan");
+}
+
+# M4 (1.1.1) — upgrade-replace must not orphan the prior version's files.
+fn test_upgrade_replace() {
+    test_group("upgrade_replace");
+    var cfg = ark_config_default();
+    store64(cfg + 56, str_from("/tmp/ark-rep-db.json"));
+    store64(cfg + 64, str_from("/tmp/ark-rep-txn.log"));
+    var mgr = ark_mgr_new(cfg);
+
+    # Initial install of myapp into a temp root.
+    var r1 = ark_pkg_install(mgr, "tests/fixtures/sample-signed.ark", "/tmp/ark-rep-root", 1048576);
+    assert_eq(ares_success(r1), 1, "initial install ok");
+    assert(file_exists("/tmp/ark-rep-root/usr/bin/app"), "real file present");
+
+    # Inject an orphan file the next version won't ship, recorded as owned.
+    var entry = pkg_db_get(amgr_db(mgr), "myapp");
+    assert(entry != 0, "entry registered");
+    vec_push(pdbe_files(entry), str_from("/orphan.so"));
+    file_write_all("/tmp/ark-rep-root/orphan.so", str_data(str_from("x")), 1);
+    assert(file_exists("/tmp/ark-rep-root/orphan.so"), "orphan staged");
+
+    # Re-install (upgrade-replace): prior files are unlinked first, so the orphan
+    # is removed while the new version's files are re-materialized.
+    var r2 = ark_pkg_install(mgr, "tests/fixtures/sample-signed.ark", "/tmp/ark-rep-root", 1048576);
+    assert_eq(ares_success(r2), 1, "reinstall ok");
+    assert_eq(file_exists("/tmp/ark-rep-root/orphan.so"), 0, "orphan removed on upgrade-replace");
+    assert(file_exists("/tmp/ark-rep-root/usr/bin/app"), "new version file present");
+}
+
 # M3 — portable syscall shims (host behavior; agnos Sys numbers resolve at build).
 fn test_portable() {
     test_group("portable");
@@ -1254,6 +1353,8 @@ fn test_main() {
     test_native_apply();
     test_native_backend();
     test_rollback_sources();
+    test_upgrade();
+    test_upgrade_replace();
     test_portable();
     test_nous_integration();
     test_pkg_security();
