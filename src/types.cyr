@@ -16,7 +16,7 @@
 # Constants
 # =========================================================================
 
-var ARK_VERSION_STR = "1.1.2";
+var ARK_VERSION_STR = "1.1.3";
 
 var DEFAULT_TRANSACTION_LOG_PATH = "/var/lib/agnos/ark/transaction.log";
 var DEFAULT_PACKAGE_DB_PATH = "/var/lib/agnos/ark/packages.json";
@@ -258,7 +258,8 @@ fn ark_result_new(success, message, packages, source) {
 #         auto_update_check(24) color_output(32) marketplace_dir(40)
 #         cache_dir(48) package_db_path(56) transaction_log_path(64)
 #         shakti_path(72) apply(80) trust_keys(88) require_signed(96)
-#         system_backend(104) apt_wrapper(112) native_root(120) => 128 bytes
+#         system_backend(104) apt_wrapper(112) native_root(120)
+#         marketplace_url(128) => 136 bytes
 #
 # shakti_path: setuid privilege-escalation binary the executor invokes for
 #   privileged steps (see docs/adr/0001-shakti-execution-backend.md).
@@ -269,7 +270,7 @@ fn ark_result_new(success, message, packages, source) {
 # apt_wrapper: command apt-get is fronted by in BACKEND_APT_AGNOS mode.
 # =========================================================================
 
-var ACFG_SZ = 128;
+var ACFG_SZ = 136;
 
 fn acfg_strategy(p) { return load64(p); }
 fn acfg_confirm_sys(p) { return load64(p + 8); }
@@ -302,6 +303,10 @@ fn acfg_set_apt_wrapper(p, v) { store64(p + 112, v); }
 # resolved-plan path so privileged installs are testable off-root.
 fn acfg_native_root(p) { return load64(p + 120); }
 fn acfg_set_native_root(p, v) { store64(p + 120, v); }
+# Default marketplace base URL for resolve-"latest" + `ark upgrade` update
+# detection ("" = none → upgrade detection stays apt-only). (1.1.3)
+fn acfg_marketplace_url(p) { return load64(p + 128); }
+fn acfg_set_marketplace_url(p, v) { store64(p + 128, v); }
 
 # apply modes (acfg_apply): how the executor treats a built plan.
 enum ApplyMode {
@@ -338,5 +343,6 @@ fn ark_config_default() {
     #endif
     store64(p + 112, str_from(DEFAULT_APT_WRAPPER));
     store64(p + 120, str_from(""));
+    store64(p + 128, str_from(""));
     return p;
 }

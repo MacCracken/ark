@@ -54,9 +54,54 @@ fn nous_list_installed(r) {
     return payload(rr);
 }
 
-fn nous_check_updates(r) {
+# Multi-source update detection (1.1.3) — apt via nous's sysdb, plus marketplace/
+# community updates by handing nous (resolver_check_updates) the installed set
+# from ark's PackageDb and an avail_fn that resolves each package's latest
+# version from the configured marketplace (mela's /latest). With no marketplace
+# URL configured, avail_fn is nil and detection stays apt-only. Returns a vec of
+# nous avail_update records (read with nupd_*).
+# Build the installed set ark hands to nous's detector: its authoritative
+# marketplace/community packages from PackageDb, as nous installed_pkg records.
+# Held packages are skipped — they won't upgrade, so there's no reason to query
+# the marketplace about them (avoids a wasted /latest round-trip and doesn't
+# leak held-package names to the server).
+fn ark_installed_for_updates(mgr) {
+    var installed = vec_new();
+    var db = amgr_db(mgr);
+    var entries = pkg_db_list(db);
+    var i = 0;
+    while (i < vec_len(entries)) {
+        var e = vec_get(entries, i);
+        var src = pdbe_source(e);
+        if (src == SOURCE_MARKETPLACE || src == SOURCE_COMMUNITY) {
+            if (pkg_db_is_held(db, pdbe_name(e)) == 0) {
+                vec_push(installed, installed_pkg_new(pdbe_name(e), pdbe_version(e), src, 0, pdbe_size(e), 0));
+            }
+        }
+        i = i + 1;
+    }
+    return installed;
+}
+
+fn ark_check_updates(mgr) {
+    var r = amgr_resolver(mgr);
     if (r == 0) { return vec_new(); }
-    var rr = resolver_updates(r);
+    var cfg = amgr_config(mgr);
+    var installed = ark_installed_for_updates(mgr);
+
+    # Hand the marketplace URL to the avail_fn via its global (the fncall2 seam
+    # only carries name+source); nil URL → apt-only detection.
+    var url = acfg_marketplace_url(cfg);
+    ARK_AVAIL_MKT_URL = 0;
+    var avail_fn = 0;
+    if (url != 0) {
+        if (str_len(url) > 0) {
+            ARK_AVAIL_MKT_URL = url;
+            avail_fn = &ark_avail_lookup;
+        }
+    }
+
+    var rr = resolver_check_updates(r, installed, avail_fn);
     if (is_err_result(rr)) { return vec_new(); }
     return payload(rr);
 }
@@ -499,7 +544,7 @@ fn ark_info(mgr, package) {
 fn ark_update(mgr) {
     var output = ark_output_new();
     ark_output_add(output, output_line_header(str_from("Update check")));
-    var updates = nous_check_updates(amgr_resolver(mgr));
+    var updates = ark_check_updates(mgr);
     if (vec_len(updates) == 0) {
         ark_output_add(output, output_line_success(str_from("All packages up to date")));
     }
@@ -578,7 +623,7 @@ fn ark_build_upgrade_plan(mgr, updates, packages) {
 # plan-only (default) just describes. Update detection comes from nous
 # (apt-system today; native/marketplace detection is a nous producer gate).
 fn ark_upgrade(mgr, packages) {
-    var updates = nous_check_updates(amgr_resolver(mgr));
+    var updates = ark_check_updates(mgr);
     var plan = ark_build_upgrade_plan(mgr, updates, packages);
     var steps = iplan_steps(plan);
     if (vec_len(steps) == 0) {

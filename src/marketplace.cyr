@@ -70,6 +70,21 @@ fn ark_marketplace_resolve_latest(base_url, name) {
     return man_version(man);
 }
 
+# Available-version lookup for nous's resolver_check_updates (1.1.3). nous calls
+# it via fncall2(avail_fn, name, source); the marketplace base URL can't ride
+# through that 2-arg seam, so ark_check_updates stashes it here first. Returns
+# the latest version Str for a marketplace/community package, or 0 (no URL set,
+# unknown source, or offline). Single-threaded CLI → the global is safe.
+var ARK_AVAIL_MKT_URL = 0;
+
+fn ark_avail_lookup(name, source) {
+    if (ARK_AVAIL_MKT_URL == 0) { return 0; }
+    if (source == SOURCE_MARKETPLACE || source == SOURCE_COMMUNITY) {
+        return ark_marketplace_resolve_latest(ARK_AVAIL_MKT_URL, name);
+    }
+    return 0;
+}
+
 # CLI glue: `ark install name[@version] --marketplace URL [--root DIR]`. Splits
 # `name@version`; when the `@version` is omitted, resolves "latest" via the mela
 # manifest endpoint (M1). Resolves the cache dir from config, then installs.

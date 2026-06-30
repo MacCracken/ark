@@ -201,9 +201,10 @@ planned, not dropped).
   prior version's files; upgrade parser no longer eats `--system-backend`'s
   value. +20 tests (366 total); host + agnos builds, bench, fuzz green.
 - [ ] *Still open (M4):* whole-system atomic image swap (agnos boot-slot gate,
-  1.51.x (b)); native/marketplace update **detection** (nous producer gate);
-  downgrade-on-rollback (vs remove). **Holds/pins gate ark-managed packages
-  only** (apt uses `apt-mark`); they now persist across CLI processes as of 1.1.2.
+  1.51.x (b)); **native**-source update detection (waits on nous `SOURCE_NATIVE`
+  + index); downgrade-on-rollback (vs remove). **Marketplace** update detection
+  landed in 1.1.3 (nous 1.3.0 + mela `/latest`). **Holds/pins gate ark-managed
+  packages only** (apt uses `apt-mark`); they persist across CLI processes (1.1.2).
 
 ### v1.1.2 (2026-06-29) — PackageDb persistent round-trip (the reload fix)
 
@@ -220,6 +221,19 @@ planned, not dropped).
   (grows to the whole file; a truncated/corrupt load refuses to clobber the
   on-disk DB), and control bytes escape to real `\u00XX`. Host + agnos builds,
   bench, fuzz green.
+
+### v1.1.3 (2026-06-29) — `ark upgrade` detects marketplace updates (nous 1.3.0)
+
+- [x] **Marketplace update detection wired end-to-end.** nous `1.2.7` → `1.3.0`
+  (its `resolver_check_updates` pluggable detector); new `ark_check_updates(mgr)`
+  hands nous the installed set from ark's persistent `PackageDb` + an `avail_fn`
+  (`ark_avail_lookup`) that resolves each marketplace/community package's latest
+  version via mela's `/latest`. `ark upgrade` / `ark update` route through it, so
+  they surface marketplace updates (not just apt) and apply them via the
+  backend-aware executor + rollback. New `marketplace_url` config field (TOML) —
+  empty ⇒ apt-only, no network. +6 tests (397 total); adversarially reviewed.
+  Native-source detection plugs into the same `avail_fn` seam once nous ships
+  `SOURCE_NATIVE`.
 
 ### Capability inventory (verified against code 2026-06-16)
 

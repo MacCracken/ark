@@ -1104,7 +1104,7 @@ fn test_rollback_sources() {
 }
 
 # M4 (1.1.1) — real ark_upgrade: build a backend-aware plan from nous updates,
-# respecting holds + the package filter. (Detection via nous_check_updates is
+# respecting holds + the package filter. (Detection via ark_check_updates is
 # apt-host-dependent, so we test the deterministic plan-builder directly.)
 fn mk_update(name, src, iv, av) {
     var u = alloc(40);
@@ -1248,6 +1248,65 @@ fn test_db_roundtrip() {
     var c = pkg_db_get(db2, "curl");
     assert(c != 0, "curl reloaded");
     assert_eq(pdbe_pinned_src(c), 0 - 1, "unset pinned_source reloads as -1, not 0");
+}
+
+# 1.1.3 — ark consumes nous 1.3.0 multi-source update detection.
+fn t_check_avail_newer(name, source) { return str_from("9.9.9"); }
+
+fn test_check_updates() {
+    test_group("check_updates");
+
+    # marketplace_url config field: default empty, set/get.
+    var cfg = ark_config_default();
+    assert_eq(str_len(acfg_marketplace_url(cfg)), 0, "marketplace_url default empty");
+    acfg_set_marketplace_url(cfg, str_from("https://mkt.example/"));
+    assert(str_eq_cstr(acfg_marketplace_url(cfg), "https://mkt.example/"), "marketplace_url set/get");
+
+    # ark_avail_lookup: nil URL -> 0; a system source -> 0 (apt handled elsewhere);
+    # marketplace + offline (.invalid resolves nowhere) -> 0, graceful (no crash).
+    ARK_AVAIL_MKT_URL = 0;
+    assert_eq(ark_avail_lookup(str_from("x"), SOURCE_MARKETPLACE), 0, "no URL -> 0");
+    ARK_AVAIL_MKT_URL = str_from("https://example.invalid/");
+    assert_eq(ark_avail_lookup(str_from("x"), SOURCE_SYSTEM), 0, "system source -> 0");
+    assert_eq(ark_avail_lookup(str_from("x"), SOURCE_MARKETPLACE), 0, "offline marketplace -> 0");
+    ARK_AVAIL_MKT_URL = 0;
+
+    # ark_check_updates with no marketplace URL: an installed marketplace package
+    # is NOT reported (avail_fn nil -> apt-only detection).
+    var cfg2 = ark_config_default();
+    store64(cfg2 + 56, str_from("/tmp/ark-cu-db.json"));
+    store64(cfg2 + 64, str_from("/tmp/ark-cu-txn.log"));
+    var mgr = ark_mgr_new(cfg2);
+    pkg_db_register(amgr_db(mgr), db_entry_new(str_from("myagent"), str_from("1.0.0"), SOURCE_MARKETPLACE));
+    var ups = ark_check_updates(mgr);
+    var found = 0;
+    var i = 0;
+    while (i < vec_len(ups)) {
+        if (str_eq(nupd_name(vec_get(ups, i)), str_from("myagent")) == 1) { found = 1; }
+        i = i + 1;
+    }
+    assert_eq(found, 0, "no marketplace URL -> marketplace pkg not in updates");
+
+    # A held marketplace package is excluded from the set ark queries about
+    # (no wasted /latest round-trip, no leak of held names).
+    pkg_db_hold(amgr_db(mgr), str_from("myagent"));
+    assert_eq(vec_len(ark_installed_for_updates(mgr)), 0, "held marketplace pkg excluded from query set");
+
+    # Positive path: nous's detector + a stub avail_fn returning a newer version
+    # produces a marketplace update that ark reads back via nupd_*.
+    var inst2 = vec_new();
+    vec_push(inst2, installed_pkg_new(str_from("agent2"), str_from("1.0.0"), SOURCE_MARKETPLACE, 0, 0, 0));
+    var ups2 = payload(resolver_check_updates(amgr_resolver(mgr), inst2, &t_check_avail_newer));
+    var got = 0;
+    var j = 0;
+    while (j < vec_len(ups2)) {
+        var u = vec_get(ups2, j);
+        if (str_eq(nupd_name(u), str_from("agent2")) == 1) {
+            if (str_eq(nupd_available(u), str_from("9.9.9")) == 1) { got = 1; }
+        }
+        j = j + 1;
+    }
+    assert_eq(got, 1, "stub avail_fn -> marketplace update detected (avail read via nupd_*)");
 }
 
 # 1.1.2 review fixes — a failed load must not let a save wipe the on-disk DB,
@@ -1434,6 +1493,7 @@ fn test_main() {
     test_upgrade_replace();
     test_db_roundtrip();
     test_db_safety();
+    test_check_updates();
     test_portable();
     test_nous_integration();
     test_pkg_security();
