@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.6] — 2026-06-30 — install fails loudly: no more silent no-op success
+
+### Fixed
+- **`ark_pkg_install` now fails loudly when a write fails — install can no longer
+  report success on a no-op** (closes the robustness gap flagged in 1.1.5). Pass 1
+  and pass 2 of `ark_pkg_install_inner` ignored the return codes of `apkg_mkdir_p`
+  / `apkg_mkdir_parents` / `file_write_all` / `ark_symlink`, so a fully-failed
+  materialize — the pre-fix M3 `ark_mkdir` ABI bug, or simply an unwritable install
+  root — still returned `Installed <pkg> (N files)` and exit 0. Each
+  directory-create, file-write (must write exactly `size` bytes), and
+  symlink-create is now checked; on any failure the install rolls back the files
+  already laid down (via the tracked `files` vec, `ark_install_rollback`) and
+  returns an `ark_result` failure (`ark: install failed — cannot …`), so the CLI
+  prints the error and exits non-zero. `apkg_mkdir_p` / `apkg_mkdir_parents` now
+  return 0/-1 (was always 0); since mkdir's return for an existing dir is
+  target-specific (Linux `-EEXIST` vs agnos idempotent `0`), a non-zero leaf mkdir
+  is confirmed against the directory actually existing (`is_dir`) before being
+  treated as failure. New regression test `test_ark_install_failure` points an
+  install at an uncreatable root (a path under a regular file → `ENOTDIR`) and
+  asserts the result is a failure with nothing registered or materialized.
+
 ## [1.1.5] — 2026-06-30 — ark v2 M3 PROVEN: on-agnos `.ark`-with-symlinks install round-trips
 
 The full M3 milestone: a prebuilt `.ark` carrying a symlink installs on agnos and
