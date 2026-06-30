@@ -58,6 +58,22 @@ fn ark_unlink(pathc) {
     #endif
 }
 
+# mkdir(path, mode) over a cstr. Host: 2-arg SYS_MKDIR (path, mode). agnos: 2-arg
+# sys_mkdir(path, pathlen) (#9) — the agnos ABI has NO mode arg (the dir gets a
+# default mode), so the host `mode` is dropped. Replaces a raw `sys_mkdir(path,
+# mode)`, which on agnos silently passed the mode (0755 = 493) where the kernel
+# reads `pathlen` → a bogus huge length → mkdir fails → no install dirs → every
+# file/symlink write under them fails (the M3 "install reports OK but nothing
+# lands" bug). Mirrors ark_rename / ark_unlink / ark_symlink.
+fn ark_mkdir(pathc, mode) {
+    #ifdef CYRIUS_TARGET_AGNOS
+    return sys_mkdir(pathc, strlen(pathc));
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    return sys_mkdir(pathc, mode);
+    #endif
+}
+
 # symlink(target, linkpath) over cstrs. Host: 2-arg SYS_SYMLINK (#88). agnos:
 # 4-arg symlink(target, targetlen, linkpath, linkpathlen) (#63) — the kernel arm
 # landed agnos 1.51.0 and the cyrius `sys_symlink` peer landed cyrius 6.3.6, so

@@ -502,12 +502,12 @@ fn apkg_mkdir_p(path) {
     while (i < n) {
         if (load8(buf + i) == 47) {
             store8(buf + i, 0);
-            sys_mkdir(buf, 493);
+            ark_mkdir(buf, 493);
             store8(buf + i, 47);
         }
         i = i + 1;
     }
-    sys_mkdir(buf, 493);
+    ark_mkdir(buf, 493);
     return 0;
 }
 
