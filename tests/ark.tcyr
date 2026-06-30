@@ -1067,18 +1067,15 @@ fn test_native_backend() {
     var ie = pkg_db_get(amgr_db(mgr), "myapp");
     assert(ie != 0, "entry present");
     assert_eq(pdbe_source(ie), SOURCE_SYSTEM, "native system install tagged SOURCE_SYSTEM");
-    # Review fix #2: install durably WRITES the store to disk (the file is
-    # created and serializes the package + its source). NOTE: reconstructing
-    # entries on load is a separate pre-existing gap (pkg_db_load reads only
-    # schema_version; the bundled DOM JSON parser is unavailable in-build) —
-    # tracked as a follow-up, so full cross-process reload is not yet asserted.
+    # Review fix #2: install durably writes the store to disk.
     assert(file_exists("/tmp/ark-m2-db.json"), "store written to disk on install");
-    var rdb = alloc(4096);
-    var rdn = file_read_all("/tmp/ark-m2-db.json", rdb, 4096);
-    assert(rdn > 0, "store file non-empty");
-    var rdc = str_new(rdb, rdn);
-    assert(str_contains(rdc, str_from("myapp")), "persisted store names the installed package");
-    assert(str_contains(rdc, str_from("\"source\":0")), "persisted with SOURCE_SYSTEM (review fix #1)");
+    # 1.1.2: a fresh manager now RELOADS the store from disk (the reload gap is
+    # fixed) — the install survives across CLI processes, with its source intact.
+    var mgr2 = ark_mgr_new(cfg);
+    assert(pkg_db_is_installed(amgr_db(mgr2), str_from("myapp")), "install reloads across processes");
+    var re = pkg_db_get(amgr_db(mgr2), "myapp");
+    assert(re != 0, "reloaded entry present");
+    assert_eq(pdbe_source(re), SOURCE_SYSTEM, "reloaded with SOURCE_SYSTEM (not marketplace)");
 }
 
 # Review fix #3 — rollback reverses each op via its OWN source backend, so a
@@ -1203,6 +1200,86 @@ fn test_upgrade_replace() {
     assert_eq(ares_success(r2), 1, "reinstall ok");
     assert_eq(file_exists("/tmp/ark-rep-root/orphan.so"), 0, "orphan removed on upgrade-replace");
     assert(file_exists("/tmp/ark-rep-root/usr/bin/app"), "new version file present");
+}
+
+# 1.1.2 — PackageDb save→load round-trip: a fresh load reconstructs every entry
+# field (held, pins, owned files, per-file hashes, provenance) from disk.
+fn test_db_roundtrip() {
+    test_group("db_roundtrip");
+    var path = str_from("/tmp/ark-rt-db.json");
+    var db = pkg_db_load(path);
+
+    var e = db_entry_new(str_from("nginx"), str_from("1.24.0"), SOURCE_SYSTEM);
+    pdbe_set_size(e, 4096);
+    pdbe_set_held(e, 1);
+    pdbe_set_pinned_ver(e, str_from("1.24.0"));
+    pdbe_set_pinned_src(e, SOURCE_MARKETPLACE);
+    pdbe_set_signature(e, str_from("sig-hex"));
+    pdbe_set_signer(e, str_from("signer-id"));
+    vec_push(pdbe_files(e), str_from("/usr/bin/nginx"));
+    vec_push(pdbe_files(e), str_from("/etc/nginx/nginx.conf"));
+    pdbe_set_file_hash(e, str_from("/usr/bin/nginx"), str_from("deadbeef"));
+    pkg_db_register(db, e);
+    # A second package with no pins/files exercises the -1 pinned_source sentinel.
+    pkg_db_register(db, db_entry_new(str_from("curl"), str_from("8.0"), SOURCE_MARKETPLACE));
+    assert_eq(pkg_db_save(db), 1, "save ok");
+
+    # Fresh load from disk.
+    var db2 = pkg_db_load(path);
+    assert_eq(pkg_db_count(db2), 2, "both packages reloaded");
+    var r = pkg_db_get(db2, "nginx");
+    assert(r != 0, "nginx reloaded");
+    assert(str_eq(pdbe_version(r), str_from("1.24.0")), "version survives");
+    assert_eq(pdbe_source(r), SOURCE_SYSTEM, "source survives");
+    assert_eq(pdbe_size(r), 4096, "size survives");
+    assert_eq(pdbe_held(r), 1, "held survives");
+    assert_eq(pkg_db_is_held(db2, str_from("nginx")), 1, "is_held survives reload");
+    assert(str_eq(pdbe_pinned_ver(r), str_from("1.24.0")), "pinned_version survives");
+    assert_eq(pdbe_pinned_src(r), SOURCE_MARKETPLACE, "pinned_source survives");
+    assert(str_eq(pdbe_signature(r), str_from("sig-hex")), "signature survives");
+    assert(str_eq(pdbe_signer(r), str_from("signer-id")), "signer survives");
+    assert_eq(vec_len(pdbe_files(r)), 2, "owned files survive");
+    var h = pdbe_get_file_hash(r, str_from("/usr/bin/nginx"));
+    assert(h != 0, "file hash present");
+    assert(str_eq(h, str_from("deadbeef")), "per-file hash survives");
+    # Pin enforcement now works across a reload (was inert pre-1.1.2).
+    assert_eq(pkg_db_upgrade_allowed(db2, str_from("nginx"), str_from("1.99"), SOURCE_SYSTEM), 0, "pin enforced after reload");
+    # The unpinned package round-trips to the -1 sentinel, not source 0.
+    var c = pkg_db_get(db2, "curl");
+    assert(c != 0, "curl reloaded");
+    assert_eq(pdbe_pinned_src(c), 0 - 1, "unset pinned_source reloads as -1, not 0");
+}
+
+# 1.1.2 review fixes — a failed load must not let a save wipe the on-disk DB,
+# and control bytes must escape to real \u00XX (not collapse to NUL).
+fn test_db_safety() {
+    test_group("db_safety");
+
+    # Corrupt (non-empty, unparseable) DB: loads empty + marked not-ok, and a
+    # subsequent save REFUSES to overwrite it (no silent wipe).
+    var cpath = str_from("/tmp/ark-corrupt-db.json");
+    file_write_all(str_data(cpath), str_data(str_from("{ not valid json")), 16);
+    var cdb = pkg_db_load(cpath);
+    assert_eq(pkg_db_count(cdb), 0, "corrupt db loads empty");
+    assert_eq(pdb_loaded_ok(cdb), 0, "corrupt load marked not-ok");
+    pkg_db_register(cdb, db_entry_new(str_from("x"), str_from("1"), SOURCE_SYSTEM));
+    assert_eq(pkg_db_save(cdb), 0, "save refused after corrupt load");
+    var rb = alloc(64);
+    var rn = file_read_all("/tmp/ark-corrupt-db.json", rb, 64);
+    assert(str_contains(str_new(rb, rn), str_from("not valid")), "corrupt file left intact (not clobbered)");
+
+    # A clean (absent) DB is loaded-ok and saves normally.
+    var fresh = pkg_db_load(str_from("/tmp/ark-fresh-db.json"));
+    assert_eq(pdb_loaded_ok(fresh), 1, "absent db loads ok");
+    pkg_db_register(fresh, db_entry_new(str_from("y"), str_from("1"), SOURCE_SYSTEM));
+    assert_eq(pkg_db_save(fresh), 1, "save proceeds on clean load");
+
+    # json_escape_str emits the real \u00XX for control bytes, not a fixed NUL.
+    var cb = alloc(3);
+    store8(cb, 65); store8(cb + 1, 1); store8(cb + 2, 66);
+    var esb = str_builder_new();
+    json_escape_str(esb, str_new(cb, 3));
+    assert(str_contains(str_builder_build(esb), str_from("\\u0001")), "control byte 0x01 escaped as \\u0001");
 }
 
 # M3 — portable syscall shims (host behavior; agnos Sys numbers resolve at build).
@@ -1355,6 +1432,8 @@ fn test_main() {
     test_rollback_sources();
     test_upgrade();
     test_upgrade_replace();
+    test_db_roundtrip();
+    test_db_safety();
     test_portable();
     test_nous_integration();
     test_pkg_security();

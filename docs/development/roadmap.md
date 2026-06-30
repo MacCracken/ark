@@ -184,7 +184,7 @@ planned, not dropped).
 - [x] **M2 — native backend + authoritative store (ark's share).** Under `BACKEND_NATIVE`, `SOURCE_SYSTEM` steps install from ark's local `.ark` store into the **`PackageDb` (authoritative — ark never shells `dpkg-query`)**; default flips to `native` on agnos (`#ifdef CYRIUS_TARGET_AGNOS`). Acceptance met for ark's share (`test_native_backend`). **Producer gate (nous):** there is no `SOURCE_NATIVE` resolver / signed native index / lockfile in nous 1.2.7 (HEAD == 1.2.7, verified per-tag) — ark is the wired-and-ready *consumer*; the resolver half lands when nous ships it.
 - [x] **M3 — syscall portability triage.** New `src/portable.cyr` `#ifdef`-guarded shims (`ark_now_secs`/`ark_fsync`/`ark_rename`/`ark_unlink`/`ark_symlink`) replace the Linux-host raw literals (`time 201`, `fsync 74`, `rename 82`, `O_* 193`) and the agnos-absent `sys_symlink`/4-arg ABIs; `confirm()` 128-byte over-read into a 16-byte buffer fixed. Acceptance (host-side, **compiling ≠ working**): the **agnos cross-build now compiles** (`cyrius build --agnos`; previously failed on undefined `sys_symlink`) and the host path stays **byte-identical** (337 tests green). **Deferred:** on-agnos QEMU+iron runtime validation; symlink-bearing `.ark` is rejected on agnos until the symlink syscall lands (agnos 1.51.x).
 - [x] 346 tests (+54: M0 +26, M1 +9, M2 +8, M3 +5, review-fix regressions +6), bench + fuzz green; host **and** agnos builds clean. Adversarially reviewed; 7 correctness findings fixed (source attribution, durable saves, full-source rollback, version-carrying remove, portable open, CLI/validation).
-- [ ] **Follow-up (pre-existing, discovered in review): `PackageDb` does not reload from disk.** `pkg_db_save` writes correct JSON but `pkg_db_load` never reconstructs the `packages` object (reads only `schema_version`), so the installed-set doesn't survive across CLI processes. Predates 1.1.0 (affected pin/hold too). Blocked on a working object parser — the bundled DOM parser `json_v_parse` returns 0 in-build; only the flat key→string parser works. Needed before the native store is truly authoritative across processes / on-agnos.
+- [x] **Resolved in 1.1.2: `PackageDb` round-trips to disk.** `pkg_db_load` now reconstructs entries (was reading only `schema_version`) and `pkg_db_save` persists the full entry (pins, owned files, per-file hashes — previously dropped). The "bundled DOM parser returns 0" blocker was a cyrius 6.3.5 `_str` overload mis-dispatch on `json_v_parse(Str)`; the loader calls `bayan_json_v_parse_str(str_data, str_len)` directly. The native store is now authoritative across processes, and ark-managed holds/pins persist. See v1.1.2 below.
 
 ### v1.1.1 (2026-06-29) — M4 host slice: real `ark upgrade`
 
@@ -203,8 +203,23 @@ planned, not dropped).
 - [ ] *Still open (M4):* whole-system atomic image swap (agnos boot-slot gate,
   1.51.x (b)); native/marketplace update **detection** (nous producer gate);
   downgrade-on-rollback (vs remove). **Holds/pins gate ark-managed packages
-  only** (apt uses `apt-mark`) and need the `pkg_db_load` reload follow-up to
-  persist across CLI processes.
+  only** (apt uses `apt-mark`); they now persist across CLI processes as of 1.1.2.
+
+### v1.1.2 (2026-06-29) — PackageDb persistent round-trip (the reload fix)
+
+- [x] **`PackageDb` survives across CLI processes.** `pkg_db_load` reconstructs
+  entries via `bayan_json_v_parse_str` (the `json_v_parse(Str)` wrapper
+  mis-dispatches under cyrius 6.3.5 — `_str` overload routing drops the length);
+  `pkg_db_save` now persists the full entry — pins (`-1` sentinel explicit),
+  owned files, per-file hashes, provenance — previously all dropped. Schema
+  v2→v3 (older files load with defaults). Fixed a latent 64 KiB-alloc/512 KiB-cap
+  read overflow. **Result:** the native store is authoritative across processes,
+  and ark-managed holds/pins (1.1.1) are now effective in real runs. +25 tests
+  (391 total): full round-trip + the re-enabled cross-process reload assertions +
+  DB-safety. **Adversarially reviewed; fixes:** large-DB read no longer truncates
+  (grows to the whole file; a truncated/corrupt load refuses to clobber the
+  on-disk DB), and control bytes escape to real `\u00XX`. Host + agnos builds,
+  bench, fuzz green.
 
 ### Capability inventory (verified against code 2026-06-16)
 

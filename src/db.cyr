@@ -12,6 +12,10 @@ var PDBE_SZ = 128;
 fn pdbe_name(p) { return load64(p); }
 fn pdbe_version(p) { return load64(p + 8); }
 fn pdbe_source(p) { return load64(p + 16); }
+fn pdbe_installed_at(p) { return load64(p + 24); }
+fn pdbe_set_installed_at(p, v) { store64(p + 24, v); }
+fn pdbe_installed_by(p) { return load64(p + 32); }
+fn pdbe_set_installed_by(p, v) { store64(p + 32, v); }
 fn pdbe_size(p) { return load64(p + 40); }
 fn pdbe_set_size(p, v) { store64(p + 40, v); }
 fn pdbe_checksum(p) { return load64(p + 48); }
@@ -152,51 +156,138 @@ fn pdbe_verify(entry, public_key) {
 # Fields: packages(0) db_path(8)   => 16 bytes
 # =========================================================================
 
-var PDB_SZ = 16;
+var PDB_SZ = 24;
 
 fn pdb_map(p) { return load64(p); }
 fn pdb_path(p) { return load64(p + 8); }
+# 1 = the on-disk DB loaded cleanly (or there was none); 0 = the load was
+# truncated/corrupt, so the in-memory map is known-incomplete and pkg_db_save
+# refuses to overwrite the file (else a partial load would wipe real records).
+fn pdb_loaded_ok(p) { return load64(p + 16); }
+fn pdb_set_loaded_ok(p, v) { store64(p + 16, v); }
 
 fn pkg_db_new() {
     var p = alloc(PDB_SZ);
     store64(p, map_new());
     store64(p + 8, str_from(""));
+    store64(p + 16, 1);
     return p;
 }
 
 # Current database schema version
-var DB_SCHEMA_VERSION = 2;
+var DB_SCHEMA_VERSION = 3;
 # v1: original (name, version, source, size, held)
-# v2: added file_checksums, signature, signer, pinned_version, pinned_source
+# v2: (declared) file_checksums/signature/signer/pins — but save never wrote them
+# v3: full round-trip — pkg_db_load now reconstructs entries, and pkg_db_save
+#     persists pins + owned files + per-file hashes + provenance. Older v1/v2
+#     files load with defaults for any missing field (load guards absent keys).
+
+# DOM-value field readers (return a default when the key is absent or wrong-typed).
+# NOTE: keys MUST be raw cstr literals — bayan_json_v_obj_get does strlen/memeq on
+# a char*, so a str_from() key silently returns 0.
+fn pdb_v_int_or(obj, key, dflt) {
+    var v = bayan_json_v_obj_get(obj, key);
+    if (v == 0) { return dflt; }
+    if (bayan_json_v_is_int(v) == 0) { return dflt; }
+    return bayan_json_v_int(v);
+}
+fn pdb_v_str_or(obj, key, dflt) {
+    var v = bayan_json_v_obj_get(obj, key);
+    if (v == 0) { return dflt; }
+    if (bayan_json_v_is_str(v) == 0) { return dflt; }
+    return bayan_json_v_str(v);
+}
+
+# Reconstruct a PackageDbEntry from its parsed JSON object node.
+fn pdb_entry_from_json(name, e) {
+    var entry = db_entry_new(name, pdb_v_str_or(e, "version", str_from("")), pdb_v_int_or(e, "source", 0));
+    pdbe_set_size(entry, pdb_v_int_or(e, "size_bytes", 0));
+    pdbe_set_held(entry, pdb_v_int_or(e, "held", 0));
+    pdbe_set_checksum(entry, pdb_v_str_or(e, "checksum", str_from("")));
+    pdbe_set_signature(entry, pdb_v_str_or(e, "signature", str_from("")));
+    pdbe_set_signer(entry, pdb_v_str_or(e, "signer", str_from("")));
+    pdbe_set_pinned_ver(entry, pdb_v_str_or(e, "pinned_version", str_from("")));
+    # pinned_source: -1 is "unset" and 0 is a real source, so default to -1.
+    pdbe_set_pinned_src(entry, pdb_v_int_or(e, "pinned_source", 0 - 1));
+    pdbe_set_installed_by(entry, pdb_v_str_or(e, "installed_by", str_from("root")));
+    var ia = pdb_v_int_or(e, "installed_at", 0);
+    if (ia > 0) { pdbe_set_installed_at(entry, ia); }
+    # Owned files (array of paths).
+    var farr = bayan_json_v_obj_get(e, "files");
+    if (farr != 0) {
+        if (bayan_json_v_is_arr(farr) == 1) {
+            var fl = bayan_json_v_arr_len(farr);
+            var fj = 0;
+            while (fj < fl) {
+                var fv = bayan_json_v_arr_get(farr, fj);
+                if (bayan_json_v_is_str(fv) == 1) { vec_push(pdbe_files(entry), bayan_json_v_str(fv)); }
+                fj = fj + 1;
+            }
+        }
+    }
+    # Per-file SHA-256 hashes (object path->hex).
+    var fco = bayan_json_v_obj_get(e, "file_checksums");
+    if (fco != 0) {
+        if (bayan_json_v_is_obj(fco) == 1) {
+            var fcn = bayan_json_v_obj_len(fco);
+            var fk = 0;
+            while (fk < fcn) {
+                var fpath = bayan_json_v_obj_key(fco, fk);
+                var fhv = bayan_json_v_obj_val(fco, fk);
+                if (bayan_json_v_is_str(fhv) == 1) { pdbe_set_file_hash(entry, fpath, bayan_json_v_str(fhv)); }
+                fk = fk + 1;
+            }
+        }
+    }
+    return entry;
+}
 
 fn pkg_db_load(path) {
     var p = alloc(PDB_SZ);
     store64(p, map_new());
     store64(p + 8, path);
-    # Load existing DB and check schema version
-    var buf = alloc(65536);
-    var bytes = file_read_all(str_data(path), buf, 524288);
-    if (bytes > 0) {
-        var content = str_new(buf, bytes);
-        var pairs = json_parse(content);
-        if (pairs > 0) {
-            var ver_str = json_get(pairs, "schema_version");
-            var db_ver = 1;
-            if (ver_str > 0) { db_ver = str_to_int(ver_str); }
-            if (db_ver < DB_SCHEMA_VERSION) {
-                # Migration: v1->v2 adds new fields with defaults
-                # Since we re-create entries on load, new fields get
-                # defaults automatically. Just log it.
-                var sb = str_builder_new();
-                str_builder_add_cstr(sb, "ark: migrated db schema v");
-                str_builder_add_int(sb, db_ver);
-                str_builder_add_cstr(sb, " -> v");
-                str_builder_add_int(sb, DB_SCHEMA_VERSION);
-                str_builder_add_cstr(sb, "\n");
-                var msg = str_builder_build(sb);
-                print(str_data(msg), str_len(msg));
-            }
+    store64(p + 16, 1);
+    # Read the whole file. file_read_all caps at maxlen and gives no truncation
+    # signal, so grow the buffer until a read no longer fills it (EOF reached) —
+    # a truncated read would parse as empty and the next save would WIPE the
+    # on-disk DB (review #2). 64 MiB ceiling is far past any real package set.
+    var cap = 524288;
+    var buf = alloc(cap);
+    var bytes = file_read_all(str_data(path), buf, cap);
+    while (bytes >= cap && cap < 67108864) {
+        cap = cap * 2;
+        buf = alloc(cap);
+        bytes = file_read_all(str_data(path), buf, cap);
+    }
+    if (bytes <= 0) { return p; }
+    if (bytes >= cap) {
+        # Still truncated at the ceiling — refuse to load (and to later clobber).
+        pdb_set_loaded_ok(p, 0);
+        return p;
+    }
+    var content = str_new(buf, bytes);
+    # Parse with the DOM value parser, invoked the only way that works in cyrius
+    # 6.3.5: the explicit buf+len entry. json_v_parse(Str) mis-dispatches via the
+    # _str overload routing (drops the len, reads 0, returns 0) — see mela.cyr.
+    var root = bayan_json_v_parse_str(str_data(content), str_len(content));
+    if (root == 0) {
+        # A non-empty file that won't parse is corrupt — don't let a save clobber it.
+        pdb_set_loaded_ok(p, 0);
+        return p;
+    }
+    if (bayan_json_v_is_obj(root) == 0) { pdb_set_loaded_ok(p, 0); return p; }
+    var pkgs = bayan_json_v_obj_get(root, "packages");
+    if (pkgs == 0) { return p; }
+    if (bayan_json_v_is_obj(pkgs) == 0) { return p; }
+    var n = bayan_json_v_obj_len(pkgs);
+    var i = 0;
+    while (i < n) {
+        var name = bayan_json_v_obj_key(pkgs, i);
+        var e = bayan_json_v_obj_val(pkgs, i);
+        if (bayan_json_v_is_obj(e) == 1) {
+            map_set(pdb_map(p), str_data(name), pdb_entry_from_json(name, e));
         }
+        i = i + 1;
     }
     return p;
 }
@@ -225,7 +316,15 @@ fn json_escape_str(sb, s) {
             elif (c == 10) { str_builder_add_cstr(sb, "\\n"); }
             elif (c == 13) { str_builder_add_cstr(sb, "\\r"); }
             elif (c == 9) { str_builder_add_cstr(sb, "\\t"); }
-            else { str_builder_add_cstr(sb, "\\u0000"); }
+            else {
+                # Other control bytes (0x00-0x1F) -> the real \u00XX escape, not a
+                # fixed   (which would corrupt the byte to NUL on reload).
+                str_builder_add_cstr(sb, "\\u00");
+                var hi = (c >> 4) & 15;
+                var lo = c & 15;
+                if (hi < 10) { str_builder_add_byte(sb, hi + 48); } else { str_builder_add_byte(sb, hi + 87); }
+                if (lo < 10) { str_builder_add_byte(sb, lo + 48); } else { str_builder_add_byte(sb, lo + 87); }
+            }
             i = i + 1;
         }
     }
@@ -233,6 +332,13 @@ fn json_escape_str(sb, s) {
 
 fn pkg_db_save(db) {
     if (str_len(pdb_path(db)) == 0) { return 1; }
+    # The on-disk DB failed to load (truncated past the ceiling, or corrupt) — the
+    # in-memory map is known-incomplete, so overwriting would destroy real records.
+    if (pdb_loaded_ok(db) == 0) {
+        var w = str_from("ark: refusing to save — package DB failed to load; on-disk file left intact\n");
+        print(str_data(w), str_len(w));
+        return 0;
+    }
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "{\"schema_version\":");
     str_builder_add_int(sb, DB_SCHEMA_VERSION);
@@ -254,16 +360,52 @@ fn pkg_db_save(db) {
         str_builder_add_int(sb, pdbe_size(entry));
         str_builder_add_cstr(sb, ",\"held\":");
         str_builder_add_int(sb, pdbe_held(entry));
-        # Signature fields
-        var sig = pdbe_signature(entry);
-        if (str_len(sig) > 0) {
-            str_builder_add_cstr(sb, ",\"signature\":\"");
-            json_escape_str(sb, sig);
-            str_builder_add_cstr(sb, "\",\"signer\":\"");
-            json_escape_str(sb, pdbe_signer(entry));
+        str_builder_add_cstr(sb, ",\"installed_at\":");
+        str_builder_add_int(sb, pdbe_installed_at(entry));
+        str_builder_add_cstr(sb, ",\"installed_by\":\"");
+        json_escape_str(sb, pdbe_installed_by(entry));
+        str_builder_add_cstr(sb, "\",\"checksum\":\"");
+        json_escape_str(sb, pdbe_checksum(entry));
+        str_builder_add_cstr(sb, "\",\"signature\":\"");
+        json_escape_str(sb, pdbe_signature(entry));
+        str_builder_add_cstr(sb, "\",\"signer\":\"");
+        json_escape_str(sb, pdbe_signer(entry));
+        str_builder_add_cstr(sb, "\",\"pinned_version\":\"");
+        json_escape_str(sb, pdbe_pinned_ver(entry));
+        # pinned_source: emit the raw int incl. the -1 "unset" sentinel (0 is a
+        # real source, so the field must be explicit, not omitted).
+        str_builder_add_cstr(sb, "\",\"pinned_source\":");
+        str_builder_add_int(sb, pdbe_pinned_src(entry));
+        # Owned files + per-file hashes, driven by the files list so the array
+        # and the checksum map stay consistent.
+        str_builder_add_cstr(sb, ",\"files\":[");
+        var fls = pdbe_files(entry);
+        var fi = 0;
+        while (fi < vec_len(fls)) {
+            if (fi > 0) { str_builder_add_cstr(sb, ","); }
             str_builder_add_cstr(sb, "\"");
+            json_escape_str(sb, vec_get(fls, fi));
+            str_builder_add_cstr(sb, "\"");
+            fi = fi + 1;
         }
-        str_builder_add_cstr(sb, "}");
+        str_builder_add_cstr(sb, "],\"file_checksums\":{");
+        var first_fc = 1;
+        var fhi = 0;
+        while (fhi < vec_len(fls)) {
+            var fp = vec_get(fls, fhi);
+            var h = pdbe_get_file_hash(entry, fp);
+            if (h != 0) {
+                if (first_fc == 0) { str_builder_add_cstr(sb, ","); }
+                first_fc = 0;
+                str_builder_add_cstr(sb, "\"");
+                json_escape_str(sb, fp);
+                str_builder_add_cstr(sb, "\":\"");
+                json_escape_str(sb, h);
+                str_builder_add_cstr(sb, "\"");
+            }
+            fhi = fhi + 1;
+        }
+        str_builder_add_cstr(sb, "}}");
         i = i + 1;
     }
     str_builder_add_cstr(sb, "}}");
