@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.4.1] — 2026-07-03 — end recipe-fn shadowing vs vendored nous
+
 ### Fixed
 - **Removed a latent last-def-wins shadowing hazard against the vendored
   `lib/nous.cyr`.** `src/recipe.cyr` defined `parse_toml_array` and
