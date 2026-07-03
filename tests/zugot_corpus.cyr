@@ -50,7 +50,7 @@ fn main() {
             memcpy(pb, str_data(raw), pl);
             store8(pb + pl, 0);
             var path = str_new(pb, pl);
-            var rr = recipe_parse_file(path);
+            var rr = ark_recipe_parse_file(path);
             if (is_ok(rr) == 1) {
                 ok = ok + 1;
                 var errs = recipe_validate(result_unwrap(rr));

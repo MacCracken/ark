@@ -64,7 +64,7 @@ fn recipe_new() {
 # Parses "[\"a\", \"b\", \"c\"]" into a vec of Str
 # =========================================================================
 
-fn parse_toml_array(val) {
+fn ark_parse_toml_array(val) {
     var result = vec_new();
     if (val == 0) { return result; }
     var d = str_data(val);
@@ -96,7 +96,7 @@ fn parse_toml_array(val) {
 # Recipe parsing from CYML file
 # =========================================================================
 
-fn recipe_parse_file(path) {
+fn ark_recipe_parse_file(path) {
     # Buffer must match the read cap — alloc(65536) with a 524288 read cap
     # was a heap overflow for any recipe > 64 KiB.
     var cap = 524288;
@@ -135,7 +135,7 @@ fn recipe_parse(data, len) {
             v = toml_get(pairs, "license");
             if (v > 0) { store64(r + 24, v); }
             v = toml_get(pairs, "groups");
-            if (v > 0) { store64(r + 32, parse_toml_array(v)); }
+            if (v > 0) { store64(r + 32, ark_parse_toml_array(v)); }
             v = toml_get(pairs, "release");
             if (v > 0) { store64(r + 40, str_to_int(v)); }
             v = toml_get(pairs, "arch");
@@ -151,7 +151,7 @@ fn recipe_parse(data, len) {
             v = toml_get(pairs, "license");
             if (v > 0) { store64(r + 24, v); }
             v = toml_get(pairs, "groups");
-            if (v > 0) { store64(r + 32, parse_toml_array(v)); }
+            if (v > 0) { store64(r + 32, ark_parse_toml_array(v)); }
             v = toml_get(pairs, "release");
             if (v > 0) { store64(r + 40, str_to_int(v)); }
             v = toml_get(pairs, "arch");
@@ -167,9 +167,9 @@ fn recipe_parse(data, len) {
         }
         if (sname > 0 && str_eq(sname, str_from("depends"))) {
             var v = toml_get(pairs, "runtime");
-            if (v > 0) { store64(r + 72, parse_toml_array(v)); }
+            if (v > 0) { store64(r + 72, ark_parse_toml_array(v)); }
             v = toml_get(pairs, "build");
-            if (v > 0) { store64(r + 80, parse_toml_array(v)); }
+            if (v > 0) { store64(r + 80, ark_parse_toml_array(v)); }
         }
         if (sname > 0 && str_eq(sname, str_from("build"))) {
             var v = toml_get(pairs, "configure");
@@ -187,7 +187,7 @@ fn recipe_parse(data, len) {
         }
         if (sname > 0 && str_eq(sname, str_from("security"))) {
             var v = toml_get(pairs, "hardening");
-            if (v > 0) { store64(r + 136, parse_toml_array(v)); }
+            if (v > 0) { store64(r + 136, ark_parse_toml_array(v)); }
             v = toml_get(pairs, "cflags");
             if (v > 0) { store64(r + 144, v); }
             v = toml_get(pairs, "ldflags");
@@ -297,7 +297,7 @@ fn recipe_scan_dir(dir_path) {
             str_builder_add_cstr(sb, "/");
             str_builder_add(sb, fname);
             var fpath = str_builder_build(sb);
-            var rr = recipe_parse_file(fpath);
+            var rr = ark_recipe_parse_file(fpath);
             if (is_ok(rr)) { vec_push(recipes, result_unwrap(rr)); }
         }
         i = i + 1;

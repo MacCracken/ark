@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **Removed a latent last-def-wins shadowing hazard against the vendored
+  `lib/nous.cyr`.** `src/recipe.cyr` defined `parse_toml_array` and
+  `recipe_parse_file`, whose names collided with nous's own
+  `parse_toml_array(s): i64` / `recipe_parse_file(path): i64` (different
+  signatures/bodies — nous returns a raw `i64`, ark returns a `Result`). Cyrius
+  resolves duplicate `fn` names last-def-wins with only a warning, so behavior
+  was correct only as long as ark's definitions happened to link last; a link-
+  order flip would have silently bound ark's call sites to nous's raw-`i64`
+  bodies. Renamed ark's copies to `ark_parse_toml_array` / `ark_recipe_parse_file`
+  and updated all ark call sites (`src/` + tests); nous's internal calls now
+  correctly bind to its own definitions. No behavior change — suite green 408/0.
+
 ## [1.4.0] — 2026-07-03 — `$ARK_ZUGOT_PATH` override + cyrius 6.3.38
 
 ### Changed
