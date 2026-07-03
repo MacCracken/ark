@@ -3,7 +3,7 @@
 ## Module Map
 
 ```
-ark (Cyrius binary; toolchain cyrius 6.3.5)
+ark (Cyrius binary; toolchain cyrius 6.3.38)
   src/types.cyr       -- constants, enums, struct accessors (ArkConfig, ArkCommand, InstallPlan/Step)
   src/portable.cyr    -- host/agnos syscall portability shims (ADR 0003)
   src/output.cyr      -- ArkOutputLine, ArkOutput, rendering

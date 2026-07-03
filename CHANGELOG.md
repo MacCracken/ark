@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-07-03 — `$ARK_ZUGOT_PATH` override + cyrius 6.3.38
+
+### Changed
+- **Toolchain: migrated to cyrius 6.3.38** (`cyrius.cyml` pin + `.cyrius-toolchain`;
+  `cyrius lib sync --full` re-vendored the stdlib snapshot, which also pulls in
+  bayan 1.0.4 — TOML `"""` multi-line support). Suite green: 408/0.
+
+### Added
+- **`$ARK_ZUGOT_PATH` override for the community RecipeDb path.** The zugot
+  recipe tree ark resolves community (`SOURCE_COMMUNITY`) packages from
+  defaults to `/usr/share/zugot`; it can now be pointed elsewhere via the
+  `ARK_ZUGOT_PATH` environment variable — but **only when unprivileged**
+  (euid != 0), the same local-injection guard `load_config` applies to
+  `$ARK_CONFIG` (audit C4). A set-but-invalid override (missing directory)
+  falls back to the default rather than silently disabling recipe resolution.
+  This makes the sovereign install-by-name path (`zugot → takumi signed .ark →
+  nous resolve → ark cache install`) testable against an alternate recipe tree
+  without mutating system paths. Proven end-to-end on the host: a takumi-built
+  signed `.ark` installs via `ark install <name> --apply --root <target>`,
+  files + DB record landing in the target root, host `/var` untouched.
+
 ## [1.3.0] — 2026-07-02 — sovereign `--root` installs (record + files into the target) + batch `--dir` mode
 
 ### Added

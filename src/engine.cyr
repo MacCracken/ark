@@ -4,12 +4,30 @@
 
 var ZUGOT_PATH = "/usr/share/zugot";
 
+# Effective zugot recipe-DB path. Defaults to the system /usr/share/zugot,
+# overridable via $ARK_ZUGOT_PATH — but ONLY when unprivileged (euid != 0),
+# the same local-injection guard load_config applies to $ARK_CONFIG (audit C4).
+# Lets tests and non-standard installs point the community RecipeDb at an
+# alternate recipe tree without mutating system paths. A set-but-invalid
+# override (missing dir) falls back to the default rather than silently
+# disabling recipe resolution.
+fn _ark_zugot_path() {
+    if (sys_geteuid() != 0) {
+        var env_path = getenv("ARK_ZUGOT_PATH");
+        if (env_path > 0) {
+            var ep = str_from(env_path);
+            if (is_dir(ep) == 1) { return ep; }
+        }
+    }
+    return str_from(ZUGOT_PATH);
+}
+
 fn nous_resolver_new(mkt_dir, cache_dir) {
     var rr = resolver_new(mkt_dir, cache_dir);
     if (is_err_result(rr)) { return 0; }
     var r = payload(rr);
     # Attach recipe DB for dependency fallback
-    var rdb = recipe_db_load(str_from(ZUGOT_PATH));
+    var rdb = recipe_db_load(_ark_zugot_path());
     if (rdb > 0) { resolver_with_recipes(r, rdb); }
     return r;
 }
