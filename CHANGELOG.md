@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-07-02 — cyrius 6.3.35 toolchain migration + nous 1.3.1
+
+### Changed
+- **Toolchain migrated to cyrius `6.3.35`.** `cyrius.cyml` pin `6.3.9` → `6.3.35` and
+  `.cyrius-toolchain` `6.3.5` → `6.3.35` (both were stale and mutually inconsistent; CI
+  reads `.cyrius-toolchain`). Full gate green on 6.3.35: fmt/vet/capacity clean, the
+  seven linted `src/` modules clean, **suite 403 passed / 0 failed**.
+- **`nous` dependency `1.3.0` → `1.3.1`** (`cyrius.cyml` [deps.nous]; `cyrius.lock`
+  regenerated).
+
+### Fixed
+- **Resolver-path SIGSEGV on cyrius ≥ 6.3.13 (via the `nous` dep).** Building ark on
+  6.3.13+ detonated a stack-smash in nous's `our_is_dir` (`registry_new → our_is_dir`,
+  reached by `resolver_new`): nous sized its `struct stat` buffer `var statbuf[18]`
+  (18 u64 slots under the pre-6.3.13 heap-local model, but 18 **bytes** on the stack
+  since 6.3.13), so `sys_stat`'s 144-byte write overran it. It crashed ark's
+  `nous_integration` test at teardown. Fixed upstream in **nous 1.3.1** (`statbuf[144]`);
+  ark re-resolves the corrected `dist/nous.cyr`. No ark source change was required —
+  ark's own code carries no undersized stack buffers.
+
 ## [1.1.6] — 2026-06-30 — install fails loudly: no more silent no-op success
 
 ### Fixed
@@ -170,7 +190,7 @@ makes ark-managed **holds/pins actually persist**.
   not-loaded and **`pkg_db_save` refuses to overwrite the on-disk file** (it's
   left intact). Also fixed the original 64 KiB-alloc/512 KiB-cap overflow.
 - **`json_escape_str` control-byte escaping** (review #1) — control bytes
-  `0x00–0x1F` other than `\n\r\t` were all written as a literal ` `,
+  `0x00–0x1F` other than `\n\r\t` were all written as a literal `\0`,
   corrupting the real byte to NUL on reload (e.g. an exotic file path). They now
   emit the correct `\u00XX`.
 
