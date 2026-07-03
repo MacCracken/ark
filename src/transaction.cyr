@@ -191,6 +191,10 @@ fn txn_log_persist(log, txn) {
     # Use locked append to prevent concurrent write interleaving (H3)
     # Locked append + fsync for crash safety
     var lpath = str_data(tlog_path(log));
+    # Same fresh-root gap as pkg_db_save: O_CREAT makes the log file, not its
+    # parent dir (/var/lib/agnos/ark, or <root>/... under --root). mkdir -p it so
+    # the append open doesn't fail fd<0 and silently drop the transaction record.
+    apkg_mkdir_parents(lpath);
     var lfd = file_open(lpath, O_WRONLY | O_CREAT | O_APPEND, 420);
     if (lfd >= 0) {
         file_lock(lfd);

@@ -1496,6 +1496,51 @@ fn test_pkg_security() {
     assert_eq(ark_pkg_signer_trusted(p, ark_trust_from_keyring(emptykr)), 0, "empty keyring -> untrusted");
 }
 
+# --root wiring: ark_execute's name/group install paths stage into
+# config.native_root; _apply_native_root must copy a command's --root there
+# (and leave it empty when --root is absent) so a `ark install --root <dir>
+# <name>` installs into <dir>, not the live root.
+fn test_install_root_wiring() {
+    test_group("install_root_wiring");
+    var cfg = ark_config_default();
+    store64(cfg + 56, str_from("/tmp/ark-nrw-db.json"));
+    store64(cfg + 64, str_from("/tmp/ark-nrw-txn.log"));
+    var mgr = ark_mgr_new(cfg);
+    var cmd = ark_cmd_new(CMD_INSTALL);
+    acmd_set_root(cmd, str_from("/tmp/ark-nrw-target"));
+    _apply_native_root(mgr, cmd);
+    assert_eq(str_eq(acfg_native_root(amgr_config(mgr)), str_from("/tmp/ark-nrw-target")), 1,
+    "--root is wired into config.native_root");
+
+    var cfg2 = ark_config_default();
+    store64(cfg2 + 56, str_from("/tmp/ark-nrw-db2.json"));
+    store64(cfg2 + 64, str_from("/tmp/ark-nrw-txn2.log"));
+    var mgr2 = ark_mgr_new(cfg2);
+    var cmd2 = ark_cmd_new(CMD_INSTALL);
+    _apply_native_root(mgr2, cmd2);
+    assert_eq(str_len(acfg_native_root(amgr_config(mgr2))), 0, "no --root leaves native_root empty");
+}
+
+# --dir batch install: `ark install --dir <pkgdir>` installs every .ark in the
+# directory into --root, recording each into the target DB. tests/fixtures holds
+# two real .ark fixtures; installing that dir must succeed and write the DB.
+fn test_install_dir_batch() {
+    test_group("install_dir_batch");
+    var cfg = ark_config_default();
+    store64(cfg + 56, str_from("/tmp/ark-batch/var/lib/agnos/ark/packages.json"));
+    store64(cfg + 64, str_from("/tmp/ark-batch/var/lib/agnos/ark/transaction.log"));
+    var mgr = ark_mgr_new(cfg);
+    var r = ark_install_dir(mgr, str_from("tests/fixtures"), str_from("/tmp/ark-batch-root"));
+    assert_eq(ares_success(r), 1, "--dir install of the fixtures dir succeeds");
+    assert_eq(file_exists("/tmp/ark-batch/var/lib/agnos/ark/packages.json"), 1,
+    "--dir install recorded to the (mkdir'd) DB");
+
+    # An empty dir must fail cleanly ("no .ark packages"), not crash.
+    sys_mkdir("/tmp/ark-batch-empty", 493);
+    var r2 = ark_install_dir(mgr, str_from("/tmp/ark-batch-empty"), str_from("/tmp/ark-batch-root2"));
+    assert_eq(ares_success(r2), 0, "--dir on a dir with no .arks fails cleanly");
+}
+
 # =========================================================================
 # Main test runner
 # =========================================================================
@@ -1530,6 +1575,8 @@ fn test_main() {
     test_portable();
     test_nous_integration();
     test_pkg_security();
+    test_install_root_wiring();
+    test_install_dir_batch();
     return assert_summary();
 }
 

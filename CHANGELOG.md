@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-07-02 — sovereign `--root` installs (record + files into the target) + batch `--dir` mode
+
+### Added
+- **`ark install --dir <pkgdir>` — batch-install every `.ark` in a directory**
+  (+ `--no-confirm` / `-y` to skip the confirm prompt). Each package installs into
+  `--root` (files staged under it + recorded in the target's own DB), non-`.ark`
+  entries are skipped, and it fails closed (a non-zero exit) if any package fails.
+  This is the call **agnova** makes to install a directory of pre-staged base
+  packages in one shot: `ark install --apply --no-confirm --root <target> --dir
+  /run/agnos/installer/packages/`. New `ark_install_dir` + `acmd_dir` /
+  `acmd_no_confirm` command fields. +1 test (`install_dir_batch`, 408 total).
+
+### Fixed
+- **`--root` installs now record into the TARGET root's package DB + transaction log**
+  (`src/cli.cyr`, `src/db.cyr`, `src/transaction.cyr`, `src/types.cyr`). Previously
+  `ark install --root <dir> <.ark>` staged the installed FILES under `<dir>` (via
+  `native_root`) but wrote the DB record + txn log to the HOST `/var/lib/agnos/ark`
+  (or silently no-op'd on a read-only host `/var`) — so an install into an agnova
+  target root left the target with no package DB of its own. The CLI dispatch now
+  root-prefixes `acfg_db_path`/`acfg_log_path` via `apkg_join` before `ark_mgr_new`,
+  so `<root>/var/lib/agnos/ark/{packages.json,transaction.log}` are written. Verified
+  across plain / trailing-slash / deep-nested roots; host `/var` untouched; a 2nd
+  install reads the target DB back and appends to its log (real round-trip). New
+  `acfg_set_db_path` / `acfg_set_log_path` setters.
+- **Name-based `--root` installs now stage their FILES into the target root too**
+  (`src/engine.cyr`). `ark install --root <dir> <name>` installs via the resolved-step
+  executor, which stages files at `config.native_root` — but nothing set it, so a name
+  install ignored `--root` and materialized into the LIVE root (the file-side twin of
+  the DB bug above; only the single-`.ark` path honored `--root`). `ark_execute` now
+  wires `--root` → `native_root` for the name + group install paths via a new
+  `_apply_native_root` helper; the single-`.ark` / marketplace branches pass their
+  root explicitly and don't read `native_root`, so they're unaffected. +1 test
+  (`install_root_wiring`, 405 total).
+- **`pkg_db_save` / `txn_log_persist` no longer silently drop the record when the DB
+  dir is absent.** `O_CREAT` makes the file, not its parent; on a fresh (or freshly
+  `--root`-ed) system `/var/lib/agnos/ark` doesn't exist, so the open failed `fd<0`
+  and `pkg_db_save` `return 0`'d while reporting the package installed. Both writers
+  now `apkg_mkdir_parents` the (target-rooted) parent dir first.
+- Source hygiene: removed a stray NUL byte from a `src/db.cyr` comment (it made
+  `grep` treat the file as binary).
+
+### Known
+- `--root` is parsed only by `install`; query commands (`list`, `info`) reject it, so
+  a target's DB can't yet be inspected host-side via `ark list --root <dir>` (the
+  target's own ark reads it correctly once booted). Making `--root` a global flag is a
+  follow-up.
+
 ## [1.2.0] — 2026-07-02 — cyrius 6.3.35 toolchain migration + nous 1.3.1
 
 ### Changed

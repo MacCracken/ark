@@ -318,7 +318,7 @@ fn json_escape_str(sb, s) {
             elif (c == 9) { str_builder_add_cstr(sb, "\\t"); }
             else {
                 # Other control bytes (0x00-0x1F) -> the real \u00XX escape, not a
-                # fixed   (which would corrupt the byte to NUL on reload).
+                # fixed \0 (which would corrupt the byte to NUL on reload).
                 str_builder_add_cstr(sb, "\\u00");
                 var hi = (c >> 4) & 15;
                 var lo = c & 15;
@@ -410,6 +410,12 @@ fn pkg_db_save(db) {
     }
     str_builder_add_cstr(sb, "}}");
     var json = str_builder_build(sb);
+    # Ensure the DB's parent dir exists before the temp open. On a fresh system
+    # /var/lib/agnos/ark is absent; under --root it's <root>/var/lib/agnos/ark
+    # (also absent). O_CREAT below makes the FILE, not the dir, so without this the
+    # temp open fails fd<0 and pkg_db_save silently `return 0`s — install reports
+    # success while NO record persists. mkdir -p the parent (mkdir#9 seam op).
+    apkg_mkdir_parents(str_data(pdb_path(db)));
     # Secure temp: random suffix, O_CREAT|O_EXCL|O_WRONLY, mode 0600
     var tmp_sb = str_builder_new();
     str_builder_add(tmp_sb, pdb_path(db));

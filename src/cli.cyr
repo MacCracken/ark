@@ -36,12 +36,18 @@ fn parse_args(ac, av) {
                 i = i + 1;
                 if (i >= ac) { println("--marketplace requires a base URL"); return 0; }
                 acmd_set_mkt_url(c, str_from(argv(i)));
-            } elif (load8(arg) != 45) { vec_push(acmd_packages(c), str_from(arg)); }
+            } elif (streq(arg, "--dir")) {
+                i = i + 1;
+                if (i >= ac) { println("--dir requires a directory"); return 0; }
+                acmd_set_dir(c, str_from(argv(i)));
+            } elif (streq(arg, "--no-confirm") || streq(arg, "-y")) { acmd_set_no_confirm(c, 1); }
+            elif (load8(arg) != 45) { vec_push(acmd_packages(c), str_from(arg)); }
             else { println("Unknown flag for install"); return 0; }
             i = i + 1;
         }
-        if (acmd_tag(c) == CMD_INSTALL && vec_len(acmd_packages(c)) == 0) {
-            println("install requires at least one package name or --group <name>");
+        # --dir batch install takes no package-name args; otherwise ≥1 is required.
+        if (acmd_tag(c) == CMD_INSTALL && vec_len(acmd_packages(c)) == 0 && str_len(acmd_dir(c)) == 0) {
+            println("install requires at least one package name, --group <name>, or --dir <dir>");
             return 0;
         }
         return c;
@@ -406,11 +412,27 @@ fn main() {
     # Confirm only when a step will actually run. Plan-only (default) and
     # dry-run never mutate the system, so they skip the prompt.
     if (acfg_apply(config) == APPLY_REAL) {
-        var prompt = needs_confirmation(cmd, config);
-        if (prompt > 0) {
-            if (confirm(prompt) == 0) { println("Cancelled."); return 0; }
+        # --no-confirm skips the prompt (installer / scripted use, e.g. agnova).
+        if (acmd_no_confirm(cmd) == 0) {
+            var prompt = needs_confirmation(cmd, config);
+            if (prompt > 0) {
+                if (confirm(prompt) == 0) { println("Cancelled."); return 0; }
+            }
         }
     }
+    # --root <dir>: redirect the package DB + transaction log into the target
+    # root so a staged install records into the TARGET's own /var/lib/agnos/ark,
+    # not the host's. native_root already stages the installed FILES there
+    # (exec_native_step); this makes the on-disk STATE (DB + txn log) land in the
+    # same root, reusing apkg_join — the file-staging path's root-join. Without
+    # it, `ark install --root <dir> <.ark>` lays files under <dir> but records to
+    # the host /var (wrong root, or a silent no-op on a read-only host /var).
+    var _iroot = acmd_root(cmd);
+    if (_iroot != 0) { if (str_len(_iroot) > 0) {
+            var _irc = str_data(_iroot);
+            acfg_set_db_path(config, str_from(apkg_join(_irc, str_data(acfg_db_path(config)))));
+            acfg_set_log_path(config, str_from(apkg_join(_irc, str_data(acfg_log_path(config)))));
+        } }
     var mgr = ark_mgr_new(config);
     var result = ark_execute(mgr, cmd);
     var output = ark_output_new();

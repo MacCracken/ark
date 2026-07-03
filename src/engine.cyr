@@ -181,10 +181,83 @@ fn ark_mgr_new(config) {
 # ArkPackageManager methods
 # =========================================================================
 
+# --dir batch install: install every `.ark` file in `dir_str` into the (optional)
+# install root, accumulating records into the target's PackageDb. This is the
+# call agnova makes to install a directory of pre-staged base `.ark` packages in
+# one shot. Non-`.ark` entries are skipped. Each package goes through the proven
+# single-`.ark` path (ark_install_local → ark_pkg_install), so files stage into
+# --root and the record lands in --root's DB (the config db/log paths were already
+# root-prefixed at the cli.cyr dispatch). Fails closed: any single failure makes
+# the batch result a failure (with a count), so agnova sees a non-zero exit.
+fn ark_install_dir(mgr, dir_str, root_str) {
+    var entries = dir_list(dir_str);
+    var installed = 0;
+    var failed = 0;
+    var last_err = str_from("");
+    var i = 0;
+    while (i < vec_len(entries)) {
+        var name = vec_get(entries, i);
+        # apkg_is_ark_path takes a Str (str_ends_with wants Str, Str) — pass the
+        # dir_list entry Str directly, NOT str_data(name) (a cstring read as a Str
+        # header faults).
+        if (apkg_is_ark_path(name) == 1) {
+            var sb = str_builder_new();
+            str_builder_add(sb, dir_str);
+            str_builder_add_cstr(sb, "/");
+            str_builder_add(sb, name);
+            var r = ark_install_local(mgr, str_builder_build(sb), root_str);
+            if (ares_success(r) == 1) { installed = installed + 1; }
+            else { failed = failed + 1; last_err = ares_message(r); }
+        }
+        i = i + 1;
+    }
+    if (installed == 0) { if (failed == 0) {
+            var sbn = str_builder_new();
+            str_builder_add_cstr(sbn, "ark: --dir: no .ark packages found in ");
+            str_builder_add(sbn, dir_str);
+            return ark_result_new(0, str_builder_build(sbn), vec_new(), SOURCE_UNKNOWN);
+        } }
+    if (failed > 0) {
+        var sbf = str_builder_new();
+        str_builder_add_cstr(sbf, "ark: --dir install: ");
+        str_builder_add_int(sbf, failed);
+        str_builder_add_cstr(sbf, " of ");
+        str_builder_add_int(sbf, installed + failed);
+        str_builder_add_cstr(sbf, " failed (last: ");
+        str_builder_add(sbf, last_err);
+        str_builder_add_cstr(sbf, ")");
+        return ark_result_new(0, str_builder_build(sbf), vec_new(), SOURCE_UNKNOWN);
+    }
+    var sbok = str_builder_new();
+    str_builder_add_cstr(sbok, "Installed ");
+    str_builder_add_int(sbok, installed);
+    str_builder_add_cstr(sbok, " package(s) from ");
+    str_builder_add(sbok, dir_str);
+    return ark_result_new(1, str_builder_build(sbok), vec_new(), SOURCE_UNKNOWN);
+}
+
+# Wire a command's --root into config.native_root so the name/group install
+# paths stage their files into the target root. exec_native_step reads
+# config.native_root as the staging root, and NOTHING else sets it — so without
+# this a `ark install --root <dir> <name>` would resolve+install into the LIVE
+# root, not <dir>. The single-.ark and marketplace branches pass their install
+# root explicitly to ark_install_local / ark_marketplace_install_arg and do not
+# read native_root, so they neither need nor are affected by this.
+fn _apply_native_root(mgr, cmd) {
+    var r = acmd_root(cmd);
+    if (r != 0) { if (str_len(r) > 0) { acfg_set_native_root(amgr_config(mgr), r); } }
+    return 0;
+}
+
 fn ark_execute(mgr, cmd) {
     var tag = acmd_tag(cmd);
     if (tag == CMD_INSTALL) {
         var ipkgs = acmd_packages(cmd);
+        # `--dir <pkgdir>`: batch-install every .ark in the directory into --root
+        # (agnova's base-system path — one call, no package names).
+        if (str_len(acmd_dir(cmd)) > 0) {
+            return ark_install_dir(mgr, acmd_dir(cmd), acmd_root(cmd));
+        }
         # `--marketplace URL` + name@version: download from mela, then install.
         if (str_len(acmd_mkt_url(cmd)) > 0) {
             if (vec_len(ipkgs) == 1) {
@@ -198,6 +271,7 @@ fn ark_execute(mgr, cmd) {
                 return ark_install_local(mgr, vec_get(ipkgs, 0), acmd_root(cmd));
             }
         }
+        _apply_native_root(mgr, cmd);
         return ark_install(mgr, ipkgs, acmd_force(cmd));
     }
     if (tag == CMD_GROUP_INSTALL) {
@@ -205,6 +279,7 @@ fn ark_execute(mgr, cmd) {
         if (meta == 0) { meta = str_data(acmd_group(cmd)); }
         var pkgs = vec_new();
         vec_push(pkgs, str_from(meta));
+        _apply_native_root(mgr, cmd);
         return ark_install(mgr, pkgs, acmd_force(cmd));
     }
     if (tag == CMD_REMOVE) { return ark_remove(mgr, acmd_packages(cmd), acmd_purge(cmd)); }
