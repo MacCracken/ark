@@ -1,6 +1,10 @@
 [package]
 name = "ark"
-version = "1.4.1"
+# ⚠ Read from the VERSION file, not restated here — every other repo in the ecosystem
+# uses this form. Hardcoding it made cyrius.cyml a SECOND source of truth and it drifted:
+# VERSION said 1.4.2 while this said 1.4.1 (v6.6.2). Same class as the `.cyrius-toolchain`
+# file removed in the same release.
+version = "${file:VERSION}"
 description = "ark - Cyrius port"
 license = "GPL-3.0-only"
 language = "cyrius"

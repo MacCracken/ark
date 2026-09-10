@@ -47,6 +47,15 @@ calls to the deleted `payload()`/`tag()`.
 bayan renamed its explicit buf+len JSON entry `_str` → `_buf` in its own 6.6 migration. ark sat on
 6.3.38, so the call had gone stale and the build would not link.
 
+### Fixed — `cyrius.cyml` hardcoded ark's OWN version, and it drifted
+
+`version = "1.4.1"` was written literally in the manifest while `VERSION` said 1.4.2 — a second
+source of truth for ark's own version, missed on the first pass of this release and caught by the
+maintainer. Now `version = "${file:VERSION}"`, the form every other repo in the ecosystem already
+uses (agnostik, agnova, mela, nous). ⚠ Same class as the `.cyrius-toolchain` removal below: this
+release found **three** copies of the toolchain version disagreeing and **two** copies of ark's own
+version disagreeing. Every one of them is now read rather than restated.
+
 ### Fixed — ⛔ THREE disagreeing toolchain versions
 
 `.cyrius-toolchain` said **6.3.38**, `CONTRIBUTING.md` said **6.3.5**, `cyrius.cyml` pinned
