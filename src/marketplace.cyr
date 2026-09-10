@@ -18,7 +18,7 @@ fn ark_marketplace_cache_path(cache_dir, name, version) {
     # Sanitize name + version separately (mela's sanitizer maps '.' -> '_'),
     # then append a literal ".ark" so the cached artifact keeps its extension.
     var fname = str_cat(str_cat(sanitize_filename(name), str_from("-")),
-    str_cat(sanitize_filename(version), str_from(".ark")));
+      str_cat(sanitize_filename(version), str_from(".ark")));
     return path_join(cache_dir, fname);
 }
 
@@ -31,11 +31,11 @@ fn ark_marketplace_cache_path(cache_dir, name, version) {
 fn ark_marketplace_install(mgr, base_url, cache_dir, name, version, install_root, max_len) {
     if (validate_path_segment(name) == 0) {
         return ark_result_new(0, str_from("ark: invalid marketplace package name"),
-        vec_new(), SOURCE_MARKETPLACE);
+          vec_new(), SOURCE_MARKETPLACE);
     }
     if (validate_path_segment(version) == 0) {
         return ark_result_new(0, str_from("ark: invalid marketplace package version"),
-        vec_new(), SOURCE_MARKETPLACE);
+          vec_new(), SOURCE_MARKETPLACE);
     }
     var cache_path = ark_marketplace_cache_path(cache_dir, name, version);
     var cpath = str_data(cache_path);
@@ -45,8 +45,8 @@ fn ark_marketplace_install(mgr, base_url, cache_dir, name, version, install_root
         var n = mela_fetch_artifact(client, name, version, cache_path);
         if (n <= 0) {
             return ark_result_new(0,
-            str_from("ark: marketplace download failed (offline or server unavailable)"),
-            vec_new(), SOURCE_MARKETPLACE);
+              str_from("ark: marketplace download failed (offline or server unavailable)"),
+              vec_new(), SOURCE_MARKETPLACE);
         }
     }
     var iroot = "";
@@ -100,7 +100,7 @@ fn ark_marketplace_install_arg(mgr, url, pkg_arg, root) {
     # A leading '@' (no name) or trailing '@' (empty version) is malformed.
     if (at == 0 || at == n - 1) {
         return ark_result_new(0, str_from("ark: malformed name@version"),
-        vec_new(), SOURCE_MARKETPLACE);
+          vec_new(), SOURCE_MARKETPLACE);
     }
     var name = pkg_arg;
     var version = str_from("");
@@ -110,13 +110,13 @@ fn ark_marketplace_install_arg(mgr, url, pkg_arg, root) {
         # URL (don't let an unvalidated arg reach the request path).
         if (validate_path_segment(name) == 0) {
             return ark_result_new(0, str_from("ark: invalid marketplace package name"),
-            vec_new(), SOURCE_MARKETPLACE);
+              vec_new(), SOURCE_MARKETPLACE);
         }
         version = ark_marketplace_resolve_latest(url, name);
         if (version == 0) {
             return ark_result_new(0,
-            str_from("ark: could not resolve latest version (offline or unknown package)"),
-            vec_new(), SOURCE_MARKETPLACE);
+              str_from("ark: could not resolve latest version (offline or unknown package)"),
+              vec_new(), SOURCE_MARKETPLACE);
         }
     } else {
         name = str_new(data, at);

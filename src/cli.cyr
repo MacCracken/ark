@@ -76,8 +76,8 @@ fn parse_args(ac, av) {
             if (streq(arg, "--source") || streq(arg, "-s")) {
                 i = i + 1;
                 if (i >= ac) { println("--source requires a value"); return 0; }
-                var src = parse_source_str(argv(i));
-                if (is_ok(src)) { acmd_set_source(c, result_unwrap(src)); }
+                var src_t, src = parse_source_str(argv(i));
+                if (is_ok(src_t)) { acmd_set_source(c, result_unwrap(src_t, src)); }
                 else { println("Unknown source"); return 0; }
             } elif (load8(arg) != 45) { vec_push(parts, str_from(arg)); }
             else { println("Unknown flag for search"); return 0; }
@@ -257,8 +257,8 @@ fn load_config_from(path) {
         if (val > 0) { store64(config + 48, val); }
         val = toml_get(pairs, "system_backend");
         if (val > 0) {
-            var br = parse_backend_str(str_data(val));
-            if (is_ok(br)) { acfg_set_system_backend(config, result_unwrap(br)); }
+            var br_t, br = parse_backend_str(str_data(val));
+            if (is_ok(br_t)) { acfg_set_system_backend(config, result_unwrap(br_t, br)); }
         }
         val = toml_get(pairs, "apt_wrapper");
         if (val > 0) { acfg_set_apt_wrapper(config, val); }
@@ -399,8 +399,8 @@ fn main() {
                 println("--system-backend requires a value (apt | apt-agnos | native)");
                 return 1;
             }
-            var br = parse_backend_str(argv(i + 1));
-            if (is_ok(br)) { acfg_set_system_backend(config, result_unwrap(br)); }
+            var br_t, br = parse_backend_str(argv(i + 1));
+            if (is_ok(br_t)) { acfg_set_system_backend(config, result_unwrap(br_t, br)); }
             else {
                 println("Unknown system backend (use: apt | apt-agnos | native)");
                 return 1;

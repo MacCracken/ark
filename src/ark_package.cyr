@@ -602,7 +602,7 @@ fn ark_pkg_install_inner(mgr, ark_path_cstr, install_root_cstr, max_len, record_
     var p = ark_pkg_read(ark_path_cstr, max_len);
     if (p == 0) {
         return ark_result_new(0, str_from("ark: package read or verification failed"),
-        vec_new(), SOURCE_MARKETPLACE);
+          vec_new(), SOURCE_MARKETPLACE);
     }
     # Trust gate: when policy requires it, the signer must be in the trust set
     # (anchors the signature to a known publisher) — else refuse, fail closed.
@@ -611,8 +611,8 @@ fn ark_pkg_install_inner(mgr, ark_path_cstr, install_root_cstr, max_len, record_
         var store = ark_trust_load(str_data(acfg_trust_keys(tcfg)));
         if (ark_pkg_signer_trusted(p, store) == 0) {
             return ark_result_new(0,
-            str_from("ark: refusing install — package signer not trusted (require_signed)"),
-            vec_new(), SOURCE_MARKETPLACE);
+              str_from("ark: refusing install — package signer not trusted (require_signed)"),
+              vec_new(), SOURCE_MARKETPLACE);
         }
     }
     var m = apkg_manifest(p);
@@ -630,16 +630,16 @@ fn ark_pkg_install_inner(mgr, ark_path_cstr, install_root_cstr, max_len, record_
         var ge = vec_get(entries, gi);
         if (apkg_path_safe(apkg_afe_path(ge)) == 0) {
             return ark_result_new(0,
-            str_from("ark: refusing install — unsafe package path (traversal)"),
-            vec_new(), SOURCE_MARKETPLACE);
+              str_from("ark: refusing install — unsafe package path (traversal)"),
+              vec_new(), SOURCE_MARKETPLACE);
         }
         # Fail closed on a target without symlink support (agnos) rather than
         # registering a symlink that was never created (M3 — see portable.cyr).
         if (apkg_afe_file_type(ge) == ARK_FT_SYMLINK) {
             if (ark_symlink_supported() == 0) {
                 return ark_result_new(0,
-                str_from("ark: refusing install — symlink entries unsupported on this target"),
-                vec_new(), SOURCE_MARKETPLACE);
+                  str_from("ark: refusing install — symlink entries unsupported on this target"),
+                  vec_new(), SOURCE_MARKETPLACE);
             }
         }
         gi = gi + 1;
@@ -674,15 +674,15 @@ fn ark_pkg_install_inner(mgr, ark_path_cstr, install_root_cstr, max_len, record_
                 if (apkg_mkdir_p(full) != 0) {
                     ark_install_rollback(files, install_root_cstr);
                     return ark_result_new(0,
-                    apkg_install_err("ark: install failed — cannot create directory ", pathc),
-                    vec_new(), source);
+                      apkg_install_err("ark: install failed — cannot create directory ", pathc),
+                      vec_new(), source);
                 }
             } else {
                 if (apkg_mkdir_parents(full) != 0) {
                     ark_install_rollback(files, install_root_cstr);
                     return ark_result_new(0,
-                    apkg_install_err("ark: install failed — cannot create parent directory for ", pathc),
-                    vec_new(), source);
+                      apkg_install_err("ark: install failed — cannot create parent directory for ", pathc),
+                      vec_new(), source);
                 }
                 var wn = file_write_all(full, data + apkg_afe_data_offset(e), apkg_afe_size(e));
                 # A short/negative write means the file did not land in full (open
@@ -692,8 +692,8 @@ fn ark_pkg_install_inner(mgr, ark_path_cstr, install_root_cstr, max_len, record_
                     ark_unlink(full);
                     ark_install_rollback(files, install_root_cstr);
                     return ark_result_new(0,
-                    apkg_install_err("ark: install failed — cannot write ", pathc),
-                    vec_new(), source);
+                      apkg_install_err("ark: install failed — cannot write ", pathc),
+                      vec_new(), source);
                 }
                 var pstr = str_from(pathc);
                 vec_push(files, pstr);
@@ -716,8 +716,8 @@ fn ark_pkg_install_inner(mgr, ark_path_cstr, install_root_cstr, max_len, record_
             if (apkg_mkdir_parents(sfull) != 0) {
                 ark_install_rollback(files, install_root_cstr);
                 return ark_result_new(0,
-                apkg_install_err("ark: install failed — cannot create parent directory for ", spath),
-                vec_new(), source);
+                  apkg_install_err("ark: install failed — cannot create parent directory for ", spath),
+                  vec_new(), source);
             }
             # symlink#63 (agnos) / SYS_SYMLINK (host) both return 0 on success,
             # negative on failure — abort + roll back rather than registering a
@@ -725,8 +725,8 @@ fn ark_pkg_install_inner(mgr, ark_path_cstr, install_root_cstr, max_len, record_
             if (ark_symlink(apkg_afe_symlink_target(es), sfull) != 0) {
                 ark_install_rollback(files, install_root_cstr);
                 return ark_result_new(0,
-                apkg_install_err("ark: install failed — cannot create symlink ", spath),
-                vec_new(), source);
+                  apkg_install_err("ark: install failed — cannot create symlink ", spath),
+                  vec_new(), source);
             }
             vec_push(files, str_from(spath));
             nfiles = nfiles + 1;

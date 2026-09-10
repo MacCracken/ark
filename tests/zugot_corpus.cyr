@@ -50,10 +50,10 @@ fn main() {
             memcpy(pb, str_data(raw), pl);
             store8(pb + pl, 0);
             var path = str_new(pb, pl);
-            var rr = ark_recipe_parse_file(path);
-            if (is_ok(rr) == 1) {
+            var rr_t, rr = ark_recipe_parse_file(path);
+            if (is_ok(rr_t) == 1) {
                 ok = ok + 1;
-                var errs = recipe_validate(result_unwrap(rr));
+                var errs = recipe_validate(result_unwrap(rr_t, rr));
                 if (vec_len(errs) > 0) { warns = warns + 1; }
             } else {
                 failed = failed + 1;

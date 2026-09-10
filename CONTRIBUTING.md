@@ -13,8 +13,11 @@ benchmark tooling is all the `cyrius` CLI.
    git clone https://github.com/MacCracken/ark.git
    ```
 
-2. Install the pinned cyrius toolchain (see `.cyrius-toolchain` / `cyrius.cyml` —
-   currently **6.3.5**). Dependencies (sigil, nous, mela, agnostik, sandhi)
+2. Install the pinned cyrius toolchain. **`cyrius.cyml` `[package].cyrius` is the single source
+   of truth — read it, do not copy the number anywhere.** Two other copies existed and BOTH had
+   drifted: `.cyrius-toolchain` said 6.3.38 and this line said 6.3.5 while the manifest pinned
+   6.6.2. The file is removed and the number is not restated here, because a fresh stamp in an
+   unchecked place only restarts the clock. Dependencies (sigil, nous, mela, agnostik, sandhi)
    resolve automatically from `cyrius.cyml` / `cyrius.lock` as `dist/*.cyr`
    bundles; you do **not** need to clone them. The `path = "../<dep>"` entries in
    the manifest are optional local-dev overrides.

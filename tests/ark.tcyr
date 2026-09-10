@@ -216,9 +216,9 @@ fn test_package_db() {
     pkg_db_register(db14, app_e);
     pkg_db_register(db14, make_test_entry(str_from("lib"), str_from("1.0"), SOURCE_SYSTEM, 1024, vec_new()));
     var to_inst = vec_new(); vec_push(to_inst, str_from("app")); vec_push(to_inst, str_from("lib"));
-    var order_res = pkg_db_resolve_install_order(db14, to_inst);
-    assert(is_ok(order_res), "resolve ok");
-    var order = result_unwrap(order_res);
+    var order_res_t, order_res = pkg_db_resolve_install_order(db14, to_inst);
+    assert(is_ok(order_res_t), "resolve ok");
+    var order = result_unwrap(order_res_t, order_res);
     var lib_idx = 0 - 1;
     var app_idx = 0 - 1;
     var k = 0;
@@ -359,7 +359,7 @@ fn test_ark_output() {
     var out = ark_output_new();
     ark_output_add(out, output_line_header(str_from("Test Header")));
     var pkg_line = output_line_package(
-    str_from("nginx"), str_from("1.24.0"), SOURCE_SYSTEM, str_from("HTTP server"));
+      str_from("nginx"), str_from("1.24.0"), SOURCE_SYSTEM, str_from("HTTP server"));
     ark_output_add(out, pkg_line);
     ark_output_add(out, output_line_separator());
     ark_output_add(out, output_line_success(str_from("Done")));
@@ -439,11 +439,15 @@ fn test_sources_and_groups() {
     assert(streq(group_meta_package("edge"), "agnos-edge-agent"), "edge grp");
     assert_eq(group_meta_package("unknown"), 0, "unknown grp");
 
-    assert(is_ok(parse_source_str("system")), "parse system");
-    assert_eq(result_unwrap(parse_source_str("system")), SOURCE_SYSTEM, "system val");
-    assert_eq(result_unwrap(parse_source_str("apt")), SOURCE_SYSTEM, "apt val");
-    assert_eq(result_unwrap(parse_source_str("marketplace")), SOURCE_MARKETPLACE, "mkt val");
-    assert_eq(result_unwrap(parse_source_str("flutter")), SOURCE_FLUTTER_APP, "flutter val");
+    var psys_t, psys = parse_source_str("system");
+    assert(is_ok(psys_t), "parse system");
+    assert_eq(result_unwrap(psys_t, psys), SOURCE_SYSTEM, "system val");
+    var papt_t, papt = parse_source_str("apt");
+    assert_eq(result_unwrap(papt_t, papt), SOURCE_SYSTEM, "apt val");
+    var pmkt_t, pmkt = parse_source_str("marketplace");
+    assert_eq(result_unwrap(pmkt_t, pmkt), SOURCE_MARKETPLACE, "mkt val");
+    var pflu_t, pflu = parse_source_str("flutter");
+    assert_eq(result_unwrap(pflu_t, pflu), SOURCE_FLUTTER_APP, "flutter val");
     assert(is_err_result(parse_source_str("bogus")), "bogus fails");
 }
 
@@ -470,7 +474,7 @@ fn test_security() {
     # L3: Case-insensitive search
     var db = pkg_db_new();
     pkg_db_register(db, make_test_entry(
-    str_from("Nginx-Core"), str_from("1.0"), SOURCE_SYSTEM, 1024, vec_new()));
+        str_from("Nginx-Core"), str_from("1.0"), SOURCE_SYSTEM, 1024, vec_new()));
     var results = pkg_db_search(db, str_from("nginx"));
     assert_eq(vec_len(results), 1, "icase search finds Nginx-Core");
     var results2 = pkg_db_search(db, str_from("NGINX"));
@@ -479,9 +483,9 @@ fn test_security() {
     # H1: pkg_db_save serializes actual data
     var db2 = pkg_db_new();
     pkg_db_register(db2, make_test_entry(
-    str_from("test-pkg"), str_from("2.0"), SOURCE_SYSTEM, 512, vec_new()));
+        str_from("test-pkg"), str_from("2.0"), SOURCE_SYSTEM, 512, vec_new()));
     pkg_db_register(db2, make_test_entry(
-    str_from("other-pkg"), str_from("3.0"), SOURCE_MARKETPLACE, 256, vec_new()));
+        str_from("other-pkg"), str_from("3.0"), SOURCE_MARKETPLACE, 256, vec_new()));
     # Verify list returns both
     assert_eq(vec_len(pkg_db_list(db2)), 2, "db has 2 entries before save");
 
@@ -500,7 +504,7 @@ fn test_security() {
     var db3 = pkg_db_new();
     # Package with no file manifest
     pkg_db_register(db3, make_test_entry(
-    str_from("empty-pkg"), str_from("1.0"), SOURCE_SYSTEM, 100, vec_new()));
+        str_from("empty-pkg"), str_from("1.0"), SOURCE_SYSTEM, 100, vec_new()));
     var iss1 = pkg_db_check_integrity_full(db3, str_from(""));
     assert_eq(vec_len(iss1), 1, "full: no manifest");
     assert_eq(iissue_type(vec_get(iss1, 0)), ISSUE_NO_MANIFEST, "issue type no manifest");
@@ -509,7 +513,7 @@ fn test_security() {
     var fmiss = vec_new();
     vec_push(fmiss, str_from("/nonexistent/file/xyz"));
     var miss_entry = make_test_entry(
-    str_from("miss-pkg"), str_from("1.0"), SOURCE_SYSTEM, 100, fmiss);
+      str_from("miss-pkg"), str_from("1.0"), SOURCE_SYSTEM, 100, fmiss);
     store64(miss_entry + 48, str_from("abc123"));
     pkg_db_register(db3, miss_entry);
     var iss2 = pkg_db_check_integrity_full(db3, str_from("miss-pkg"));
@@ -527,7 +531,7 @@ fn test_security() {
     var pfc_files = vec_new();
     vec_push(pfc_files, str_from("/tmp/ark-test-pfc"));
     var pfc_entry = make_test_entry(
-    str_from("pfc-pkg"), str_from("1.0"), SOURCE_SYSTEM, 100, pfc_files);
+      str_from("pfc-pkg"), str_from("1.0"), SOURCE_SYSTEM, 100, pfc_files);
     pdbe_set_file_hash(pfc_entry, str_from("/tmp/ark-test-pfc"), str_from("abc123"));
     var got_hash = pdbe_get_file_hash(pfc_entry, str_from("/tmp/ark-test-pfc"));
     assert(got_hash > 0, "per-file hash stored");
@@ -552,7 +556,7 @@ fn test_security() {
 
     # PackageDbEntry signing round-trip
     var sign_entry = make_test_entry(
-    str_from("signed-pkg"), str_from("2.0"), SOURCE_MARKETPLACE, 512, vec_new());
+      str_from("signed-pkg"), str_from("2.0"), SOURCE_MARKETPLACE, 512, vec_new());
     assert_eq(str_len(pdbe_signature(sign_entry)), 0, "unsigned initially");
     # Can't verify unsigned
     assert_eq(pdbe_verify(sign_entry, pk), 0, "unsigned verify = 0");
@@ -590,9 +594,9 @@ fn test_recipes() {
 
     # Parse inline recipe
     var ts = str_from("[package]\nname = \"test-pkg\"\nversion = \"1.0\"\n");
-    var rr = recipe_parse(str_data(ts), str_len(ts));
-    assert(is_ok(rr), "parse inline");
-    var r = result_unwrap(rr);
+    var rr_t, rr = recipe_parse(str_data(ts), str_len(ts));
+    assert(is_ok(rr_t), "parse inline");
+    var r = result_unwrap(rr_t, rr);
     assert(str_eq(recipe_name(r), str_from("test-pkg")), "inline name");
     assert(str_eq(recipe_version(r), str_from("1.0")), "inline version");
 
@@ -603,9 +607,9 @@ fn test_recipes() {
     # Parse real zugot recipe if available
     var curl_path = str_from("../zugot/base/curl.cyml");
     if (file_exists(str_data(curl_path))) {
-        var rr2 = ark_recipe_parse_file(curl_path);
-        assert(is_ok(rr2), "parse curl.cyml");
-        var r2 = result_unwrap(rr2);
+        var rr2_t, rr2 = ark_recipe_parse_file(curl_path);
+        assert(is_ok(rr2_t), "parse curl.cyml");
+        var r2 = result_unwrap(rr2_t, rr2);
         assert(str_eq(recipe_name(r2), str_from("curl")), "curl name");
         # version is validated as parsed-non-empty rather than pinned to an
         # exact upstream value (zugot bumps curl independently of ark)
@@ -741,9 +745,12 @@ fn test_system_backend() {
     assert(streq(backend_to_str(BACKEND_APT), "apt"), "backend_to_str apt");
     assert(streq(backend_to_str(BACKEND_APT_AGNOS), "apt-agnos"), "backend_to_str apt-agnos");
     assert(streq(backend_to_str(BACKEND_NATIVE), "native"), "backend_to_str native");
-    assert_eq(result_unwrap(parse_backend_str("apt")), BACKEND_APT, "parse apt");
-    assert_eq(result_unwrap(parse_backend_str("apt-agnos")), BACKEND_APT_AGNOS, "parse apt-agnos");
-    assert_eq(result_unwrap(parse_backend_str("native")), BACKEND_NATIVE, "parse native");
+    var bapt_t, bapt = parse_backend_str("apt");
+    assert_eq(result_unwrap(bapt_t, bapt), BACKEND_APT, "parse apt");
+    var bagn_t, bagn = parse_backend_str("apt-agnos");
+    assert_eq(result_unwrap(bagn_t, bagn), BACKEND_APT_AGNOS, "parse apt-agnos");
+    var bnat_t, bnat = parse_backend_str("native");
+    assert_eq(result_unwrap(bnat_t, bnat), BACKEND_NATIVE, "parse native");
     assert_eq(is_ok(parse_backend_str("bogus")), 0, "parse unknown -> err");
 
     # --- apt backend: byte-identical to the default 1-arg lowering ---
@@ -802,7 +809,7 @@ fn test_ark_package() {
     assert_eq(apkg_man_build_date(m), 1700000000, "manifest build_date");
     # description exercises TOML escape/unescape (embedded quote + newline)
     assert(str_eq_cstr(str_from("needs \"quotes\" and\na newline"),
-    apkg_man_description(m)), "description unescaped losslessly");
+        apkg_man_description(m)), "description unescaped losslessly");
     # groups / depends arrays
     assert_eq(vec_len(apkg_man_groups(m)), 2, "groups count");
     assert(str_eq_cstr(str_from("base"), vec_get(apkg_man_groups(m), 0)), "groups[0]");
@@ -861,7 +868,7 @@ fn test_ark_install() {
     var mgr = ark_mgr_new(cfg);
 
     var res = ark_pkg_install(mgr, "tests/fixtures/sample-signed.ark",
-    "/tmp/ark-inst-root", 1048576);
+      "/tmp/ark-inst-root", 1048576);
     assert_eq(ares_success(res), 1, "install succeeds");
     assert(str_contains(ares_message(res), str_from("Installed myapp 2.1.0")), "install message");
 
@@ -937,7 +944,7 @@ fn test_ark_install_failure() {
     var mgr = ark_mgr_new(cfg);
 
     var res = ark_pkg_install(mgr, "tests/fixtures/sample-signed.ark",
-    "/tmp/ark-install-fail-blocker.bin/root", 1048576);
+      "/tmp/ark-install-fail-blocker.bin/root", 1048576);
 
     # The install must FAIL (not silently report success on a no-op).
     assert_eq(ares_success(res), 0, "unwritable root -> install fails");
@@ -953,7 +960,7 @@ fn test_marketplace() {
 
     # cache-path uses mela's sanitize_filename: <cache>/<name>-<version>.ark
     var cp = ark_marketplace_cache_path(str_from("/tmp/ark-mkt-cache"),
-    str_from("myapp"), str_from("2.1.0"));
+      str_from("myapp"), str_from("2.1.0"));
     assert(str_contains(cp, str_from("myapp-2_1_0.ark")), "cache path built (sanitized)");
 
     # Marketplace forces require_signed, so provision a trust set with the
@@ -973,14 +980,14 @@ fn test_marketplace() {
     # runs fully offline (no network) through the mela download path.
     apkg_mkdir_p(str_data(str_from("/tmp/ark-mkt-cache")));
     var dst = str_data(ark_marketplace_cache_path(str_from("/tmp/ark-mkt-cache"),
-    str_from("myapp"), str_from("2.1.0")));
+        str_from("myapp"), str_from("2.1.0")));
     var fb = alloc(4096);
     var fn2 = file_read_all("tests/fixtures/sample-signed.ark", fb, 4096);
     file_write_all(dst, fb, fn2);
     var res = ark_marketplace_install(mgr, str_from("https://example.invalid/"),
-    str_from("/tmp/ark-mkt-cache"),
-    str_from("myapp"), str_from("2.1.0"),
-    str_from("/tmp/ark-mkt-root"), 1048576);
+      str_from("/tmp/ark-mkt-cache"),
+      str_from("myapp"), str_from("2.1.0"),
+      str_from("/tmp/ark-mkt-root"), 1048576);
     assert_eq(ares_success(res), 1, "cache-hit marketplace install (trusted signer) succeeds");
     assert(file_exists("/tmp/ark-mkt-root/usr/bin/app"), "marketplace install materialized file");
     assert(pkg_db_is_installed(amgr_db(mgr), str_from("myapp")), "registered in db");
@@ -993,28 +1000,28 @@ fn test_marketplace() {
     acfg_set_trust_keys(cfgu, str_from("/tmp/ark-mkt-trust-absent"));
     var mgru = ark_mgr_new(cfgu);
     var rej = ark_marketplace_install(mgru, str_from("https://example.invalid/"),
-    str_from("/tmp/ark-mkt-cache"),
-    str_from("myapp"), str_from("2.1.0"),
-    str_from("/tmp/ark-mkt-rootu"), 1048576);
+      str_from("/tmp/ark-mkt-cache"),
+      str_from("myapp"), str_from("2.1.0"),
+      str_from("/tmp/ark-mkt-rootu"), 1048576);
     assert_eq(ares_success(rej), 0, "marketplace install w/ untrusted signer refused");
 
     # Invalid version segment is rejected by mela's validator.
     var bad = ark_marketplace_install(mgr, str_from("https://example.invalid/"),
-    str_from("/tmp/ark-mkt-cache"),
-    str_from("myapp"), str_from("../etc/passwd"),
-    str_from("/tmp/ark-mkt-root"), 1048576);
+      str_from("/tmp/ark-mkt-cache"),
+      str_from("myapp"), str_from("../etc/passwd"),
+      str_from("/tmp/ark-mkt-root"), 1048576);
     assert_eq(ares_success(bad), 0, "invalid version rejected");
 
     # M1: no '@version' triggers resolve-"latest" via the mela manifest endpoint.
     # Offline (host .invalid never resolves), so it fails closed with a clear msg.
     var noat = ark_marketplace_install_arg(mgr, str_from("https://example.invalid/"),
-    str_from("myapp"), str_from(""));
+      str_from("myapp"), str_from(""));
     assert_eq(ares_success(noat), 0, "resolve-latest fails closed when offline");
     assert(str_contains(ares_message(noat), str_from("resolve latest")), "resolve-latest offline msg");
 
     # A leading '@' (no name) is still malformed.
     var bad_at = ark_marketplace_install_arg(mgr, str_from("https://example.invalid/"),
-    str_from("@2.0"), str_from(""));
+      str_from("@2.0"), str_from(""));
     assert_eq(ares_success(bad_at), 0, "leading @ malformed");
 }
 
@@ -1035,7 +1042,7 @@ fn test_native_apply() {
     # Stage the signed fixture at the cache path the executor resolves to.
     apkg_mkdir_p(str_data(str_from("/tmp/ark-m1-cache")));
     var dst = str_data(ark_marketplace_cache_path(str_from("/tmp/ark-m1-cache"),
-    str_from("myapp"), str_from("2.1.0")));
+        str_from("myapp"), str_from("2.1.0")));
     var fb = alloc(4096);
     var nb = file_read_all("tests/fixtures/sample-signed.ark", fb, 4096);
     file_write_all(dst, fb, nb);
@@ -1078,7 +1085,7 @@ fn test_native_backend() {
     # Stage the `.ark` in the local store under the system package's name/version.
     apkg_mkdir_p(str_data(str_from("/tmp/ark-m2-cache")));
     var dst = str_data(ark_marketplace_cache_path(str_from("/tmp/ark-m2-cache"),
-    str_from("myapp"), str_from("2.1.0")));
+        str_from("myapp"), str_from("2.1.0")));
     var fb = alloc(4096);
     var nb = file_read_all("tests/fixtures/sample-signed.ark", fb, 4096);
     file_write_all(dst, fb, nb);
@@ -1086,7 +1093,7 @@ fn test_native_backend() {
     # A SOURCE_SYSTEM install step (what nous emits for the system source) lowers
     # to NO apt argv under native — the executor installs it from the store.
     assert_eq(step_to_argv_be(step_system_install(str_from("myapp"), str_from("2.1.0")),
-    BACKEND_NATIVE, str_from("apt-agnos")), 0, "native: system step has no apt argv");
+        BACKEND_NATIVE, str_from("apt-agnos")), 0, "native: system step has no apt argv");
     var plan = install_plan_new();
     vec_push(iplan_steps(plan), step_system_install(str_from("myapp"), str_from("2.1.0")));
     var res = exec_plan(mgr, plan, 0);
@@ -1328,7 +1335,7 @@ fn test_check_updates() {
     # produces a marketplace update that ark reads back via nupd_*.
     var inst2 = vec_new();
     vec_push(inst2, installed_pkg_new(str_from("agent2"), str_from("1.0.0"), SOURCE_MARKETPLACE, 0, 0, 0));
-    var ups2 = payload(resolver_check_updates(amgr_resolver(mgr), inst2, &t_check_avail_newer));
+    var ups2_t, ups2 = resolver_check_updates(amgr_resolver(mgr), inst2, &t_check_avail_newer);
     var got = 0;
     var j = 0;
     while (j < vec_len(ups2)) {
@@ -1399,9 +1406,8 @@ fn test_nous_integration() {
     if (file_exists("../zugot/base/curl.cyml") == 0) { return 0; }
 
     sys_mkdir("/tmp/ark-int-mkt", 493);
-    var rr = resolver_new(str_from("/tmp/ark-int-mkt"), str_from("/tmp/ark-int-cache"));
-    assert(is_ok(rr) == 1, "resolver_new ok");
-    var r = payload(rr);
+    var r_t, r = resolver_new(str_from("/tmp/ark-int-mkt"), str_from("/tmp/ark-int-cache"));
+    assert(is_ok(r_t) == 1, "resolver_new ok");
     var rdb = recipe_db_load(str_from("../zugot"));
     assert(rdb != 0, "zugot recipe DB loaded");
     resolver_with_recipes(r, rdb);
@@ -1410,9 +1416,9 @@ fn test_nous_integration() {
     # has no recipe fallback — only resolve_all_with_recipes does).
     var names = vec_new();
     vec_push(names, str_from("curl"));
-    var ra = resolver_resolve_all_with_recipes(r, names);
-    assert(is_err_result(ra) == 0, "resolve_all(curl) returns ok");
-    var pkgs = pl_packages(payload(ra));
+    var ra_t, ra = resolver_resolve_all_with_recipes(r, names);
+    assert(is_err_result(ra_t) == 0, "resolve_all(curl) returns ok");
+    var pkgs = pl_packages(ra);
     assert(vec_len(pkgs) >= 1, "plan resolved >= 1 package");
     var found = 0;
     var i = 0;
@@ -1427,13 +1433,13 @@ fn test_nous_integration() {
     assert(found == 1, "curl present in the resolved plan (via recipe DB)");
 
     # Search returns cleanly (no apt + empty marketplace here — just no crash).
-    var sr = resolver_search(r, str_from("curl"));
-    assert(is_err_result(sr) == 0, "search returns a clean Result");
+    var sr_t, sr = resolver_search(r, str_from("curl"));
+    assert(is_err_result(sr_t) == 0, "search returns a clean Result");
 
     # Unknown package: clean miss, no crash (the 1.2.7 SIGSEGV regression).
-    var bog = resolver_resolve(r, str_from("zzznonexistentpkg"));
-    assert(is_err_result(bog) == 0, "unknown pkg resolves without error");
-    assert_eq(payload(bog), 0, "unknown pkg -> none");
+    var bog_t, bog = resolver_resolve(r, str_from("zzznonexistentpkg"));
+    assert(is_err_result(bog_t) == 0, "unknown pkg resolves without error");
+    assert_eq(bog, 0, "unknown pkg -> none");
 }
 
 fn test_pkg_security() {
@@ -1510,7 +1516,7 @@ fn test_install_root_wiring() {
     acmd_set_root(cmd, str_from("/tmp/ark-nrw-target"));
     _apply_native_root(mgr, cmd);
     assert_eq(str_eq(acfg_native_root(amgr_config(mgr)), str_from("/tmp/ark-nrw-target")), 1,
-    "--root is wired into config.native_root");
+      "--root is wired into config.native_root");
 
     var cfg2 = ark_config_default();
     store64(cfg2 + 56, str_from("/tmp/ark-nrw-db2.json"));
@@ -1533,7 +1539,7 @@ fn test_install_dir_batch() {
     var r = ark_install_dir(mgr, str_from("tests/fixtures"), str_from("/tmp/ark-batch-root"));
     assert_eq(ares_success(r), 1, "--dir install of the fixtures dir succeeds");
     assert_eq(file_exists("/tmp/ark-batch/var/lib/agnos/ark/packages.json"), 1,
-    "--dir install recorded to the (mkdir'd) DB");
+      "--dir install recorded to the (mkdir'd) DB");
 
     # An empty dir must fail cleanly ("no .ark packages"), not crash.
     sys_mkdir("/tmp/ark-batch-empty", 493);

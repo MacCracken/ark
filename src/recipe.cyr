@@ -247,35 +247,35 @@ fn recipe_to_output(r) {
 
     if (recipe_version(r) > 0) {
         ark_output_add(output, output_line_info(
-        str_from("Version"), recipe_version(r)));
+            str_from("Version"), recipe_version(r)));
     }
     if (recipe_desc(r) > 0) {
         ark_output_add(output, output_line_info(
-        str_from("Description"), recipe_desc(r)));
+            str_from("Description"), recipe_desc(r)));
     }
     if (recipe_license(r) > 0) {
         ark_output_add(output, output_line_info(
-        str_from("License"), recipe_license(r)));
+            str_from("License"), recipe_license(r)));
     }
     if (recipe_arch(r) > 0) {
         ark_output_add(output, output_line_info(
-        str_from("Arch"), recipe_arch(r)));
+            str_from("Arch"), recipe_arch(r)));
     }
     if (recipe_source_url(r) > 0) {
         ark_output_add(output, output_line_info(
-        str_from("Source"), recipe_source_url(r)));
+            str_from("Source"), recipe_source_url(r)));
     }
     # Runtime deps
     var rdeps = recipe_deps_runtime(r);
     if (vec_len(rdeps) > 0) {
         ark_output_add(output, output_line_info(
-        str_from("Runtime deps"), str_join(rdeps, str_from(", "))));
+            str_from("Runtime deps"), str_join(rdeps, str_from(", "))));
     }
     # Build deps
     var bdeps = recipe_deps_build(r);
     if (vec_len(bdeps) > 0) {
         ark_output_add(output, output_line_info(
-        str_from("Build deps"), str_join(bdeps, str_from(", "))));
+            str_from("Build deps"), str_join(bdeps, str_from(", "))));
     }
     return output;
 }
@@ -297,8 +297,8 @@ fn recipe_scan_dir(dir_path) {
             str_builder_add_cstr(sb, "/");
             str_builder_add(sb, fname);
             var fpath = str_builder_build(sb);
-            var rr = ark_recipe_parse_file(fpath);
-            if (is_ok(rr)) { vec_push(recipes, result_unwrap(rr)); }
+            var rr_t, rr = ark_recipe_parse_file(fpath);
+            if (is_ok(rr_t)) { vec_push(recipes, result_unwrap(rr_t, rr)); }
         }
         i = i + 1;
     }

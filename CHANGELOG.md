@@ -5,6 +5,62 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.2] - 2026-09-10
+
+**cyrius 6.3.38 → 6.6.2, every dep brought current, and a silent mis-bind removed.**
+Build OK (2,930,816 B), tests pass, bench passes.
+
+### Fixed — ⛔ `agent_info_new` silently mis-bound its arguments
+
+ark vendors **both** agnostik and nous, and both defined `agent_info_new` — agnostik's takes 4
+args over a 32-byte {id, name, type, status} struct, nous's took 3 over a 24-byte
+{name, version, desc} one. "Last definition wins", so calls to the other arity had their
+**arguments silently shifted**. cyrius 6.6.2 promotes an arity-disagreeing duplicate from a
+warning to a hard error, which is the only reason it surfaced.
+
+Fixed upstream in **nous 1.4.0** (`nous_agent_info_new`), not worked around here. agnostik keeps
+the bare name: it is the shared-types library for AGNOS and agent identity/status is its domain.
+⚖️ Measured across every `src/` under `~/Repos`: zero callers outside the two defining repos.
+
+### Changed — every dep tag brought current
+
+| dep | was | now |
+|---|---|---|
+| sigil | 3.9.7 | **3.12.16** |
+| nous | 1.3.1 | **1.4.0** |
+| mela | 1.0.1 | **1.0.3** |
+| agnostik | 1.3.1 | **1.6.0** |
+| sandhi | 1.7.0 | **1.9.16** |
+
+All six artifacts now resolve byte-identical to their upstream `dist/`, and `lib/` carries zero
+calls to the deleted `payload()`/`tag()`.
+
+### Changed — value-form migration
+
+`payload(r)` → the second bound variable, predicates take the tag, `result_unwrap(r)` →
+`result_unwrap(r_t, r)`. 5 files. ark has no hand-rolled `tagged_new` boxes, so no `boxed_*`.
+**Zero mixed-return warnings** — the error-reads-as-success shape does not occur here; the one
+`Result`-returning fn (`nous_resolve_all`) already returned a pair on both paths.
+
+### Fixed — stale `bayan_json_v_parse_str` (src/db.cyr)
+
+bayan renamed its explicit buf+len JSON entry `_str` → `_buf` in its own 6.6 migration. ark sat on
+6.3.38, so the call had gone stale and the build would not link.
+
+### Fixed — ⛔ THREE disagreeing toolchain versions
+
+`.cyrius-toolchain` said **6.3.38**, `CONTRIBUTING.md` said **6.3.5**, `cyrius.cyml` pinned
+**6.6.2**. CI read the first, so it installed one toolchain while the pin redirect demanded
+another. `.cyrius-toolchain` is **removed** — a second source of truth that had drifted — and both
+workflows now read the manifest pin and hand it to the upstream `install.sh` (patra's pattern).
+The old step also copied into a **flat** `~/.cyrius`, with no `versions/<v>/` layout and no
+`current`, which the pin redirect has required since 6.5.37. The number is not restated in
+CONTRIBUTING: a fresh stamp in an unchecked place only restarts the clock.
+
+### Fixed — 7 files not canonically formatted
+
+Pre-existing drift; cyrfmt only began tracking paren depth at v6.5.28 and ark was pinned 6.3.38.
+
 ## [Unreleased]
 
 ## [1.4.1] — 2026-07-03 — end recipe-fn shadowing vs vendored nous

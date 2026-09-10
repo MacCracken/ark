@@ -4,7 +4,7 @@ version = "1.4.1"
 description = "ark - Cyrius port"
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "6.3.38"
+cyrius = "6.6.2"
 
 [build]
 entry = "src/main.cyr"
@@ -17,13 +17,13 @@ stdlib = ["string", "fmt", "alloc", "vec", "str", "slice", "syscalls", "io", "ar
 [deps.sigil]
 git = "https://github.com/MacCracken/sigil.git"
 path = "../sigil"
-tag = "3.9.7"
+tag = "3.12.16"
 modules = ["dist/sigil.cyr"]
 
 [deps.nous]
 git = "https://github.com/MacCracken/nous.git"
 path = "../nous"
-tag = "1.3.1"
+tag = "1.4.0"
 modules = ["dist/nous.cyr"]
 
 # mela — AGNOS marketplace layer (signed/integrity-checked/transparency-logged).
@@ -33,17 +33,17 @@ modules = ["dist/nous.cyr"]
 [deps.mela]
 git = "https://github.com/MacCracken/mela.git"
 path = "../mela"
-tag = "1.0.1"
+tag = "1.0.3"
 modules = ["dist/mela.cyr"]
 
 [deps.agnostik]
 git = "https://github.com/MacCracken/agnostik.git"
 path = "../agnostik"
-tag = "1.3.1"
+tag = "1.6.0"
 modules = ["dist/agnostik.cyr"]
 
 [deps.sandhi]
 git = "https://github.com/MacCracken/sandhi.git"
 path = "../sandhi"
-tag = "1.7.0"
+tag = "1.9.16"
 modules = ["dist/sandhi.cyr"]

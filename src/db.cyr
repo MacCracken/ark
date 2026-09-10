@@ -269,7 +269,10 @@ fn pkg_db_load(path) {
     # Parse with the DOM value parser, invoked the only way that works in cyrius
     # 6.3.5: the explicit buf+len entry. json_v_parse(Str) mis-dispatches via the
     # _str overload routing (drops the len, reads 0, returns 0) — see mela.cyr.
-    var root = bayan_json_v_parse_str(str_data(content), str_len(content));
+    # ⚠ Renamed from `bayan_json_v_parse_str` in bayan's own 6.6 value-form migration:
+    # the explicit buf+len variant is `_buf`, not `_str`. ark sat on cyrius 6.3.38 so the
+    # call had gone stale and the build would not link.
+    var root = bayan_json_v_parse_buf(str_data(content), str_len(content));
     if (root == 0) {
         # A non-empty file that won't parse is corrupt — don't let a save clobber it.
         pdb_set_loaded_ok(p, 0);
@@ -546,7 +549,7 @@ fn pkg_db_check_integrity(db) {
         var entry = vec_get(all, i);
         if (vec_len(pdbe_files(entry)) == 0) {
             vec_push(issues, integrity_issue(
-            pdbe_name(entry), ISSUE_NO_MANIFEST, str_from("")));
+                pdbe_name(entry), ISSUE_NO_MANIFEST, str_from("")));
         }
         i = i + 1;
     }
@@ -572,7 +575,7 @@ fn pkg_db_check_integrity_full(db, pkg_filter) {
         var fls = pdbe_files(entry);
         if (vec_len(fls) == 0) {
             vec_push(issues, integrity_issue(
-            pdbe_name(entry), ISSUE_NO_MANIFEST, str_from("")));
+                pdbe_name(entry), ISSUE_NO_MANIFEST, str_from("")));
             i = i + 1;
             continue;
         }
@@ -581,7 +584,7 @@ fn pkg_db_check_integrity_full(db, pkg_filter) {
             var fpath = vec_get(fls, j);
             if (file_exists(str_data(fpath)) == 0) {
                 vec_push(issues, integrity_issue(
-                pdbe_name(entry), ISSUE_MISSING_FILE, fpath));
+                    pdbe_name(entry), ISSUE_MISSING_FILE, fpath));
                 j = j + 1;
                 continue;
             }
@@ -593,12 +596,12 @@ fn pkg_db_check_integrity_full(db, pkg_filter) {
                 if (actual > 0) {
                     if (str_eq(actual, expected) == 0) {
                         vec_push(issues, integrity_issue(
-                        pdbe_name(entry), ISSUE_CHECKSUM_MISMATCH,
-                        fpath));
+                            pdbe_name(entry), ISSUE_CHECKSUM_MISMATCH,
+                            fpath));
                     }
                 } else {
                     vec_push(issues, integrity_issue(
-                    pdbe_name(entry), ISSUE_MISSING_FILE, fpath));
+                        pdbe_name(entry), ISSUE_MISSING_FILE, fpath));
                 }
             }
             j = j + 1;
