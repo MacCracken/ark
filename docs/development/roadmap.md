@@ -71,6 +71,23 @@ What ark does today, end to end:
 - **Cross-target.** Builds for x86_64-linux and (cross-compiles for) agnos; the
   syscall-divergent paths route through `src/portable.cyr`.
 
+## Moving the cyrius pin to 6.6.5
+
+Nothing breaks at this bump. cyrius 6.6.5 is not tagged yet, and nothing
+below can land against the pin until it is. The pin is 6.6.2 today, and this
+section lists only what 6.6.5 itself changes.
+
+- [ ] 6.6.5 honours the `--check` in `cyrius doc src/main.cyr --check` (the
+  cleanliness step at `CLAUDE.md:26` and `:39`). `src/main.cyr` defines no
+  fns, so the step still checks nothing. The 12 other modules in `src/` carry
+  305 undocumented fns. Point the step at the modules (`doc` takes 1..N files
+  from 6.6.5), and document them or record a baseline. See the cyrius
+  CHANGELOG [6.6.5] entry "The whole CLI took flags as file names, dropped
+  flags written after the operand, and dropped extra operands".
+- [ ] At the bump, re-run `cyrius deps` — the aarch64 syscall peer moved
+  SYS_UNLINKAT 35 → 263, so an un-re-vendored peer's sys_unlink would run
+  nanosleep.
+
 ## Open
 
 ### Quality-gate caveats (carried)
@@ -159,3 +176,39 @@ ark's remaining share (resolution stays in nous; build in takumi):
 - Remote management API
 - Metrics and telemetry (opt-in)
 - Offline mode with cached packages
+
+## Moving the cyrius pin to 6.6.6
+
+Current pin: `cyrius = "6.6.2"` (`cyrius.cyml`).
+
+The transaction log is the only part of ark that touches the 6.6.6 Windows fix.
+`src/transaction.cyr:198` opens it with
+`file_open(lpath, O_WRONLY | O_CREAT | O_APPEND, 420)`, then `file_lock` / `file_write` /
+`ark_fsync` / `file_unlock` — a journal, which is the worst case for the pre-6.6.6 PE bug
+where `O_APPEND` overwrote from offset 0 instead of appending. **ark is not exposed**: no PE
+target (`CYRIUS_TARGET_AGNOS` is the only `CYRIUS_TARGET_*` in `src/`), CI is `ubuntu-latest`
+only, and `release.yml` produces no `windows-*` job, `.exe` asset or `--win` build. So this is
+a forward-looking note rather than a fix: if ark is ever built for Windows, 6.6.6 is the
+floor, and the transaction journal is the first thing to re-verify.
+
+Otherwise this is a plain pin bump — nothing in ark needs to change first. What was checked:
+
+- `O_APPEND` / `O_TRUNC` appear nowhere else outside the vendored `lib/`; the transaction log
+  above is the single site.
+- ark has the largest `file_exists` / `file_read_all` surface in this group (48 call sites),
+  but 6.6.6's "no longer request write access, so they succeed on read-only files and volumes"
+  change is PE-side only, so it produces no behaviour change on the targets ark ships.
+- None of item 3's new compile errors have sites: no `async fn`, no `operator` fn, no
+  `ret2`/`rethi`, no SIMD intrinsics, no struct declarations in `src/` at all, and therefore
+  no struct/vector copies, pair returns or struct-valued calls at top level. Item 5's
+  by-value-struct-param deep copy has nothing to act on either — there is not one
+  struct- or vector-typed parameter or `var` declaration in the repo's own sources.
+- No top-level bare `{` blocks (item 4). No duplicated global declarations (item 6). No
+  `regression_*` call sites of its own — the two `include` hits are `lib/regression.cyr`
+  pulling `lib/regression_agnos.cyr` (item 8). No own `vec_*` function colliding with the 14
+  names `lib/vec.cyr` exports, so the new transitive `lib/assert.cyr` → `lib/vec.cyr` include
+  is inert (item 9).
+
+After bumping, verify: the full `.tcyr` suite passes per-file (exit code, not just the grep
+summary), and one `ark install` → `ark upgrade` → rollback cycle to confirm the transaction
+journal still accumulates records rather than replacing them.
