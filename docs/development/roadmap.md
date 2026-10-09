@@ -228,3 +228,12 @@ journal still accumulates records rather than replacing them.
 - The first default resolve adds commit pins for these deps to `cyrius.lock` — a one-time diff.
 - CI lock guards and `sed`-the-path-out steps can become `cyrius deps --locked`.
 - Reference: the cyrius guide's *Git first; local development is a switch (6.7.6)*.
+
+## Moved from cyrius's roadmap (2026-10-08) — for the next cyrius pin move
+
+cyrius no longer carries this repo's follow-ups; the items below were moved here from its roadmap. Each
+applies from the cyrius version it names. Everything else that changes between this repo's pin and cyrius
+6.7.6 is in cyrius's `CHANGELOG.md` and `docs/development/ecosystem-migration.md`.
+
+- **(cyrius ≥ 6.6.17)** `[build] defines` is read by every `cyrius build`, so the `-D` flags on this repo's
+  `cyrius build` CI lines are redundant.
