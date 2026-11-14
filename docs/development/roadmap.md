@@ -2,7 +2,7 @@
 
 > Per-release detail lives in [CHANGELOG.md](../../CHANGELOG.md). This roadmap
 > tracks the *shape*: what has shipped, what's open, and the forward AGNOS /
-> sovereignty track. Current release: **1.5.0**.
+> sovereignty track. Current release: **1.5.1**.
 
 ## Shipped
 
@@ -49,9 +49,16 @@
   toolchain: none of the 6.7.x shapes that change already-compiling code occur in `src/`.
   CI resolves with `cyrius deps --locked` and now runs the fuzz harness, which had not
   compiled since the 6.6 value-form migration.
+- **1.5.1 (2026-11-13) — cyrius 6.7.18.** nous 1.7.4 / mela 1.5.2 / agnostik 2.0.0 and
+  the 6.7.18 bundled stdlib (bayan 1.11.1). nous 1.7.4 was cut for ark: nous 1.5.3+ and
+  mela could not share a program (`manifest_from_json` / `update_from_json`), and nous
+  did not compile for agnos. The trust set built from a mela keyring now holds only
+  key versions valid now. A repeated `file_checksums` key, which bayan 1.11 refuses,
+  can no longer be written. A failed update check is reported as a failure.
 
-**Deps (1.5.0):** cyrius 6.7.9; nous 1.5.0, mela 1.1.6, agnostik 1.12.0 (git);
-sigil 3.13.11, sandhi 1.10.9, sankoch 2.8.3, bayan 1.5.13, sakshi 2.5.8 (cyrius stdlib).
+**Deps (1.5.1):** cyrius 6.7.18; nous 1.7.4, mela 1.5.2, agnostik 2.0.0 (git; bayan
+1.11.1 via nous, satisfied by the stdlib fold); sigil 3.13.15, sandhi 1.13.7, sankoch
+2.8.9, bayan 1.11.1, sakshi 2.5.10 (cyrius stdlib).
 
 ### Capabilities (verified against code, 2026-06-29)
 
@@ -111,14 +118,35 @@ This section lists only what 6.6.5 itself changes.
   Needs the current release asset's sha256, so it follows the tag.
 
 ### Found at 1.5.0
-- [ ] **The trust set includes expired publisher keys.** `ark_trust_from_keyring`
-  (`src/ark_package.cyr`) trusts every version `mela_keyring_get_all_versions`
-  returns, which by mela's contract includes expired ones; nothing calls
-  `mela_kv_is_valid_at`. A policy call, not a mechanical fix: filtering at load
-  time would also refuse a re-install of a package signed while its key was
-  valid (the `.ark` carries no signing time). Options: filter by "now", or carry
-  a signing timestamp and check validity at that time. mela 1.1.1 (D5) already
-  rejects key files with no `has_until`, which used to decode as never-expiring.
+- [x] **The trust set includes expired publisher keys.** Done at 1.5.1, filtering
+  by "now": `ark_trust_from_keyring` keeps only versions `mela_kv_is_valid_at`
+  accepts at the current time (`ark_trust_from_keyring_at` takes an explicit time).
+  A package signed while its key was valid no longer installs once the key expires.
+  Carrying a signing timestamp in the `.ark` would lift that; not planned.
+
+### Found at 1.5.1
+- [ ] **Installs do not consult the mela keyring at all.** The install trust gate
+  (`ark_pkg_install_inner`) reads only the flat hex-key file `trust_keys`
+  (`/etc/agnos/ark/trusted_keys`), which has no validity dates. The keyring path
+  (`ark_trust_load_keyring`) has no caller, so 1.5.1's expiry filter takes effect
+  only once a keyring is wired in. Needs a decision: where the keyring directory
+  is configured, and whether it replaces the flat file or adds to it. When wiring
+  it, also consider mela 1.5.2's own gate rule (ADR-0017): pass over a version
+  whose `key_id` does not derive from its public key (`kv_key_id_derives`).
+- [ ] **A `packages.json` that already holds a repeated `file_checksums` key does
+  not load** under bayan 1.11 (cyrius 6.7.18), and ark then refuses every save
+  (fail-closed). 1.5.1 stops writing one; an existing file needs the duplicate
+  removed by hand. Only an `.ark` whose index lists a path twice produces one.
+- [ ] **`ark search` / `ark list` still read a failed nous query as "nothing found".**
+  1.5.1 fixed `ark update` / `ark upgrade` (they report the failure). Since nous
+  1.5.1 a failed apt query fails the whole search / list, marketplace results
+  included.
+- [ ] **Upstream, not ark's:**
+  - nous: the raw `syscall(SYS_STAT, …)` sites in `src/util.cyr` / `src/command.cyr`
+    read x86_64 Linux offsets on agnos (nous roadmap, 2.0.0 portability).
+  - agnostik 1.12.3+: a failed allocation exits the process with 71 (`_stik_alloc`).
+  - bayan 1.11: JSON parsing costs about 1.5x what it did. No ark bench parses
+    JSON (`pkg_db_load` is unbenched).
 
 ### Quality-gate caveats (carried)
 - [ ] Coverage **metric** — `cyrius coverage` is non-actionable; coverage is

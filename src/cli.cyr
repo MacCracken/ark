@@ -236,7 +236,7 @@ fn parse_args(ac, av) {
 # into the rest of the file: a bool never compared equal (every bool key and
 # system_backend were ignored) and a path or URL key carried the lines after it.
 fn cfg_toml_str(pairs, key) {
-    var v = toml_get(pairs, key);
+    var v = bayan_toml_get_by_cstr(pairs, key);
     if (v == 0) { return 0; }
     return str_from_buf(str_data(v), str_len(v));
 }

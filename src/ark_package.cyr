@@ -164,13 +164,13 @@ fn apkg_find_section(sections, name) {
 }
 
 fn apkg_get_str(pairs, key) {
-    var s = toml_get(pairs, key);
+    var s = bayan_toml_get_by_cstr(pairs, key);
     if (s == 0) { return 0; }
     return apkg_unescape_str(s);
 }
 
 fn apkg_get_int(pairs, key, fallback) {
-    var s = toml_get(pairs, key);
+    var s = bayan_toml_get_by_cstr(pairs, key);
     if (s == 0) { return fallback; }
     return str_to_int(s);
 }
@@ -201,7 +201,7 @@ fn apkg_parse_array(arr_str) {
 }
 
 fn apkg_get_arr(pairs, key) {
-    return apkg_parse_array(toml_get(pairs, key));
+    return apkg_parse_array(bayan_toml_get_by_cstr(pairs, key));
 }
 
 fn apkg_man_from_pairs(pairs) {
@@ -426,11 +426,20 @@ fn ark_pkg_signer_trusted(p, store) {
     return 0;
 }
 
-# Build an ark trust set from a mela publisher keyring: every key version's
-# public key becomes a trusted hex key. This anchors `.ark` signatures to
-# mela's keyring (the marketplace's publisher identities) rather than a
-# separately-provisioned key file.
-fn ark_trust_from_keyring(kr) {
+# Build an ark trust set from a mela publisher keyring: the public key of every
+# key version valid at `now` becomes a trusted hex key. This anchors `.ark`
+# signatures to mela's keyring (the marketplace's publisher identities) rather
+# than a separately-provisioned key file.
+#
+# Valid means mela_kv_is_valid_at: valid_from <= now, and now <= valid_until when
+# the version has an expiry. An expired or not-yet-valid version is left out
+# (until 1.5.1 every version was trusted, expired ones included —
+# mela_keyring_get_all_versions returns them all by contract). The `.ark` carries
+# no signing time, so validity is judged when ark builds the set: a package
+# signed while its key was valid stops installing once that key expires, and
+# has to be re-signed under a current key. Overlapping versions of one key_id
+# (a rotation window) are all trusted while each is valid.
+fn ark_trust_from_keyring_at(kr, now) {
     var store = map_new();
     var ids = map_keys(kr);
     var i = 0;
@@ -438,17 +447,25 @@ fn ark_trust_from_keyring(kr) {
         var versions = mela_keyring_get_all_versions(kr, vec_get(ids, i));
         var j = 0;
         while (j < vec_len(versions)) {
-            var pkhex = mela_kv_public_key_hex(vec_get(versions, j));
-            var l = str_len(pkhex);
-            var kb = alloc(l + 1);
-            memcpy(kb, str_data(pkhex), l);
-            store8(kb + l, 0);
-            map_set(store, kb, 1);
+            var kv = vec_get(versions, j);
+            if (mela_kv_is_valid_at(kv, now) == 1) {
+                var pkhex = mela_kv_public_key_hex(kv);
+                var l = str_len(pkhex);
+                var kb = alloc(l + 1);
+                memcpy(kb, str_data(pkhex), l);
+                store8(kb + l, 0);
+                map_set(store, kb, 1);
+            }
             j = j + 1;
         }
         i = i + 1;
     }
     return store;
+}
+
+# ark_trust_from_keyring_at, judged at the current wall-clock time.
+fn ark_trust_from_keyring(kr) {
+    return ark_trust_from_keyring_at(kr, ark_now_secs());
 }
 
 # Load a mela keyring directory and build an ark trust set from it.

@@ -38,7 +38,7 @@ fn nous_resolve(r, name) {
     if (is_err_result(rr_t)) {
         # Try suggestion on invalid/not-found
         var err = rr;
-        if (ne_kind(err) == ERR_INVALID_PACKAGE_NAME) {
+        if (ne_kind(err) == NOUS_ERR_INVALID_PACKAGE_NAME) {
             var known = collect_known_names(r);
             var sug = suggest_package(ne_msg(err), known);
             if (sug > 0) {
@@ -101,9 +101,14 @@ fn ark_installed_for_updates(mgr) {
     return installed;
 }
 
-fn ark_check_updates(mgr) {
+# ark_check_updates as a Result (1.5.1): Ok(vec of updates), or Err(Str) carrying
+# nous's message when detection failed. Since nous 1.5.1 an apt query that fails (a
+# capture past 16 MiB, or one cut by nous's 60 s idle deadline) fails the whole check
+# instead of being skipped, so reading Err as "no updates" made `ark update` report
+# "All packages up to date" and drop the marketplace results with it.
+fn ark_check_updates_r(mgr) {
     var r = amgr_resolver(mgr);
-    if (r == 0) { return vec_new(); }
+    if (r == 0) { return Ok(vec_new()); }
     var cfg = amgr_config(mgr);
     var installed = ark_installed_for_updates(mgr);
 
@@ -120,8 +125,15 @@ fn ark_check_updates(mgr) {
     }
 
     var rr_t, rr = resolver_check_updates(r, installed, avail_fn);
-    if (is_err_result(rr_t)) { return vec_new(); }
-    return rr;
+    if (is_err_result(rr_t)) { return Err(nous_error_msg(rr)); }
+    return Ok(rr);
+}
+
+# The updates ark_check_updates_r found, or an empty vec when the check failed.
+fn ark_check_updates(mgr) {
+    var t, v = ark_check_updates_r(mgr);
+    if (is_err_result(t)) { return vec_new(); }
+    return v;
 }
 
 # =========================================================================
@@ -519,7 +531,7 @@ fn ark_install(mgr, packages, force) {
         var kind = ne_kind(err);
         var msg = nous_error_msg(err);
         # Suggest closest match for unknown packages
-        if (kind == ERR_INVALID_PACKAGE_NAME) {
+        if (kind == NOUS_ERR_INVALID_PACKAGE_NAME) {
             var known = collect_known_names(r);
             var sug = suggest_package(ne_msg(err), known);
             if (sug > 0) { msg = build_suggestion(ne_msg(err), sug); }
@@ -645,7 +657,20 @@ fn ark_info(mgr, package) {
 fn ark_update(mgr) {
     var output = ark_output_new();
     ark_output_add(output, output_line_header(str_from("Update check")));
-    var updates = ark_check_updates(mgr);
+    var ut, updates = ark_check_updates_r(mgr);
+    return ark_update_render(output, ut, updates);
+}
+
+# Render an update check into `output`. `ut` / `updates` is ark_check_updates_r's
+# pair: a failed check is reported as a failure, never as "up to date".
+fn ark_update_render(output, ut, updates) {
+    if (is_err_result(ut)) {
+        var esb = str_builder_new();
+        str_builder_add_cstr(esb, "Update check failed: ");
+        str_builder_add(esb, updates);
+        ark_output_add(output, output_line_error(str_builder_build(esb)));
+        return output;
+    }
     if (vec_len(updates) == 0) {
         ark_output_add(output, output_line_success(str_from("All packages up to date")));
     }
@@ -724,7 +749,13 @@ fn ark_build_upgrade_plan(mgr, updates, packages) {
 # plan-only (default) just describes. Update detection comes from nous
 # (apt-system today; native/marketplace detection is a nous producer gate).
 fn ark_upgrade(mgr, packages) {
-    var updates = ark_check_updates(mgr);
+    var ut, updates = ark_check_updates_r(mgr);
+    if (is_err_result(ut)) {
+        var esb = str_builder_new();
+        str_builder_add_cstr(esb, "Update check failed: ");
+        str_builder_add(esb, updates);
+        return ark_result_new(0, str_builder_build(esb), vec_new(), SOURCE_UNKNOWN);
+    }
     var plan = ark_build_upgrade_plan(mgr, updates, packages);
     var steps = iplan_steps(plan);
     if (vec_len(steps) == 0) {

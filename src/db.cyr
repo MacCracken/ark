@@ -392,12 +392,18 @@ fn pkg_db_save(db) {
             fi = fi + 1;
         }
         str_builder_add_cstr(sb, "],\"file_checksums\":{");
+        # One key per path. The files vec can hold a path twice (an `.ark` whose index
+        # lists it twice; the installer pushes one path per entry), and since bayan 1.11
+        # (cyrius 6.7.18) a repeated key makes the WHOLE document unparseable: the next
+        # pkg_db_load would see no packages and every save after it would refuse.
+        var fc_seen = map_new();
         var first_fc = 1;
         var fhi = 0;
         while (fhi < vec_len(fls)) {
             var fp = vec_get(fls, fhi);
             var h = pdbe_get_file_hash(entry, fp);
-            if (h != 0) {
+            if (h != 0 && map_get(fc_seen, str_data(fp)) == 0) {
+                map_set(fc_seen, str_data(fp), 1);
                 if (first_fc == 0) { str_builder_add_cstr(sb, ","); }
                 first_fc = 0;
                 str_builder_add_cstr(sb, "\"");

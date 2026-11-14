@@ -44,3 +44,12 @@ date,tier,benchmark,iters,total_us,per_iter_ns
 2026-11-13-1.5.0,tier2-package-db,db_integrity_20,10000,17300,1730
 2026-11-13-1.5.0,tier3-transaction,txn_begin_commit,10000,38473,3847
 2026-11-13-1.5.0,tier3-transaction,output_display,10000,6408,641
+2026-11-13-1.5.1,tier1-construct,cmd_create,100000,25984,260
+2026-11-13-1.5.1,tier1-construct,config_default,100000,38830,388
+2026-11-13-1.5.1,tier1-construct,source_to_str,100000,3691,37
+2026-11-13-1.5.1,tier1-construct,group_meta_pkg,100000,5829,58
+2026-11-13-1.5.1,tier2-package-db,db_search_20,10000,18657,1866
+2026-11-13-1.5.1,tier2-package-db,db_total_size_20,10000,5752,575
+2026-11-13-1.5.1,tier2-package-db,db_integrity_20,10000,17235,1724
+2026-11-13-1.5.1,tier3-transaction,txn_begin_commit,10000,38130,3813
+2026-11-13-1.5.1,tier3-transaction,output_display,10000,6584,658

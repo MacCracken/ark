@@ -5,6 +5,237 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.5.1] - 2026-11-13
+
+**cyrius 6.7.9 → 6.7.18, every lib and dep on the 6.7.18 bundled / pinned version, and the trust
+set drops expired keys.** Build OK (1,861,896 B, half of 1.5.0's), 453 passed / 0 failed, fuzz
+passes, bench mostly flat.
+
+**nous 1.7.4 was cut for this release.** nous 1.5.3–1.7.3 could not be built into one program
+with mela, and did not compile for agnos. Both are fixed in nous 1.7.4 (`83c5c57`). ark was first
+verified against it in local mode (`CYRIUS_LOCAL=nous`), then built from the pushed tag.
+
+### Changed — deps on the 6.7.18 line
+
+| dep | was | now |
+|---|---|---|
+| nous | 1.5.0 | **1.7.4** (git; see *nous 1.5.1–1.7.4* below) |
+| mela | 1.1.6 | **1.5.2** (git; the functions ark calls are unchanged) |
+| agnostik | 1.12.0 | **2.0.0** (git; what mela 1.5.2 pins. ark calls no agnostik name) |
+| bayan | 1.5.13 | **1.11.1** (stdlib; see *bayan 1.11* below) |
+| sigil | 3.13.11 | **3.13.15** (stdlib) |
+| sandhi | 1.10.9 | **1.13.7** (stdlib) |
+| sankoch | 2.8.3 | **2.8.9** (stdlib) |
+| sakshi | 2.5.8 | **2.5.10** (stdlib) |
+
+- **nous's own bayan dependency.** nous 1.7.3+ declares a git dep on bayan 1.11.1's split
+  `bayan-toml` / `bayan-json` bundles. `cyrius deps` leaves them out, because the stdlib's
+  `lib/bayan.cyr` is that package, and pins only the commit. bayan documents compiling a sublib
+  beside the full fold as a compile-time refusal.
+- **Vendoring.** `lib/nous.cyr`, `lib/mela.cyr` and `lib/agnostik.cyr` are byte-identical to
+  their tags' `dist/`, and each tag's commit is the pin `cyrius.lock` records. Every stdlib leaf in
+  `lib/` matches `~/.cyrius/versions/6.7.18/lib`.
+- **The lock.** `cyrius.lock` was regenerated from scratch, as 6.7.18's `cyrius deps` suggests for
+  stale pins. The 1.4.3- and 1.5.0-era commit rows for old tags are gone, every hash line is
+  unchanged, and there are four commit pins: nous, mela, agnostik and bayan.
+
+### Fixed — ⛔ nous and mela could not be compiled together (nous 1.7.4)
+
+nous 1.5.3 added `manifest_from_json(data)` and `update_from_json(data)`. mela has defined both
+names for years, with a typed `json: Str` parameter, and cyrius 6.7.18 refuses a duplicate fn whose
+parameter types differ. ark is the only repo that vendors both.
+
+- **The fix is in nous**, the newcomer. 1.7.4 renames them to `nous_manifest_from_json` /
+  `nous_update_from_json`. Its policy is no breaking change without a major version, so the bare
+  names stay as `#deprecated` aliases until 2.0.0.
+- **ark leaves the aliases out** with the new `NOUS_NO_BARE_JSON` define. It is in `[build]
+  defines` and in a new `[test] defines`, because `[build] defines` do not reach test / bench / fuzz
+  builds (checked on a scratch project).
+- ark's one call (`src/marketplace.cyr`, the marketplace `/latest` lookup) wants mela's
+  `manifest_from_json`, and now gets it unambiguously.
+- The same 1.7.4 fixes nous for agnos (next section).
+
+### Fixed — ⛔ the agnos cross-build (nous 1.7.4)
+
+`cyrius build --agnos` failed on two nous 1.5.3 additions:
+
+- **`proc_timeout_ms` / `proc_set_timeout_ms`.** cyrius leaves these out of `process_agnos.cyr` on
+  purpose: a deadline there would bound nothing, so the call is meant to fail to compile.
+- **The 2-argument Linux `sys_lstat`.** agnos's takes a length and fills a different 48-byte
+  record.
+
+nous 1.7.4 skips the idle deadline on agnos and reads agnos's `STAT_MODE` / `STAT_SIZE`. It
+compiles for x86_64-agnos again, and so does ark: 3,861,760 B, up from 3,687,328 B at 1.5.0. The
+older raw `SYS_STAT` sites in nous still read x86_64 offsets on agnos; that is nous's 2.0.0
+portability item.
+
+### Security — the trust set holds only key versions valid now
+
+`ark_trust_from_keyring` turns a mela keyring into ark's set of trusted signer keys. It took every
+version `mela_keyring_get_all_versions` returns, and by mela's contract that includes expired ones.
+
+- **Now it keeps a version only if `mela_kv_is_valid_at` accepts it at the current time**
+  (`valid_from` ≤ now ≤ `valid_until`, when the version has an expiry). Both window edges count as
+  inside.
+- `ark_trust_from_keyring_at(kr, now)` takes an explicit time, and `ark_trust_from_keyring(kr)`
+  passes the wall clock.
+- Overlapping versions of one key id, as in a rotation window, are each trusted while they are
+  valid.
+- ⚠ **Consequence.** The `.ark` carries no signing time, so validity is judged at install time. A
+  package signed while its key was valid stops installing once that key expires, and has to be
+  re-signed under a current key.
+- ⚠ **Scope.** The install trust gate does not use the keyring today. It reads the flat
+  `trust_keys` file (`/etc/agnos/ark/trusted_keys`), which has no validity dates.
+  `ark_trust_load_keyring` has no caller. So this filter takes effect once a keyring is wired into
+  installs, which needs a decision (roadmap, "Found at 1.5.1"). The overview no longer says the
+  keyring is the install trust set.
+- **Tests:** 8 new assertions cover expired, not-yet-valid, both window edges, an unexpired
+  expiry, a rotation (old version expired, successor current) and the wall-clock wrapper. With the
+  filter removed, 5 of them fail.
+
+### Fixed — a package could make `packages.json` unloadable (bayan 1.11)
+
+bayan 1.11.1 refuses a whole JSON document in which any object repeats a key; before, the first
+value was answered.
+
+- **How ark could write one.** `pkg_db_save` wrote one `file_checksums` key per entry in a
+  package's file list, and the installer pushes one path per `.ark` index entry. So an `.ark` whose
+  index lists a path twice produced a repeated key.
+- **What followed.** On the next run `pkg_db_load` would fail, ark would see no installed packages,
+  and every save would refuse ("package DB failed to load").
+- **Fix.** `pkg_db_save` writes each path's checksum once.
+- **Test.** A new round-trip test writes a twice-listed path, then reloads and saves again. It fails
+  on 3 assertions without the fix.
+- ⚠ A `packages.json` that already contains a repeated key, which only such an `.ark` installed
+  under an earlier ark could produce, does not load under 1.5.1. Remove the duplicate by hand.
+
+### Fixed — a failed update check said "All packages up to date"
+
+ark turned any nous error from update detection into an empty list. Since nous 1.5.1 a failed apt
+query fails the whole check instead of being skipped: a capture past 16 MiB, or one cut by nous's
+60 s idle deadline. So `ark update` reported "All packages up to date" and dropped the marketplace
+results with it.
+
+- `ark_check_updates_r` returns the nous error. `ark_check_updates` keeps its vec contract.
+- `ark update` and `ark upgrade` now report "Update check failed: <nous's message>", and `upgrade`
+  exits non-zero.
+- The rendering is split out (`ark_update_render`) so the failure path is tested with a synthetic
+  error; no test host can make apt fail on cue.
+- `ark search` and `ark list` still show a failed query as "nothing found" (roadmap).
+
+### Changed — what nous 1.5.1–1.7.4 changes for ark users
+
+From nous's CHANGELOG and its "ark → nous" coordination notes, checked against the bundle diff. The
+first two were run on both binaries.
+
+- **An unknown package is an error.**
+  - 1.5.0: `ark install zzghostpkg` printed "OK: Install plan (0 packages …)" and exited 0.
+  - 1.5.1: it prints "package \`zzghostpkg\` not found: not in any source" and exits 1.
+  - A missing dependency is the same error, naming who needed it.
+- **The plan prints in install order.** "deps-first" used to be printed over the reverse order.
+  Against the zugot tree, `ark install curl`:
+  - 1.5.0: `curl, ca-certificates, openssl, zlib, glibc, kernel-edge`.
+  - 1.5.1: `linux-api-headers, glibc, zlib, openssl, xz, lz4, zstd, libnghttp2, curl`.
+  - Resolution is deterministic now. It was hash-seeded per process.
+- **Which recipe wins changed.** nous loads every zugot subdirectory, which adds `desktops/`. For a
+  name in several directories it keeps the first in byte order, `base` first. Before, the last one
+  scanned won. 23 names change recipe, curl among them (edge → base).
+- **Recipe arrays.** A list written over several lines (`runtime = [` on its own line, in 47 zugot
+  files) now parses, so groups / runtime / build / hardening are filled where they read empty.
+- **Version constraints.** Every constraint is intersected and the chosen version is checked, so
+  there are more, correct, version conflicts. Compound ranges parse (1.7.1). A pre-release
+  satisfies a constraint only when the constraint names one (1.7.0).
+- **Flutter apps** are labelled flutter-app and install through the Flutter step.
+- **Update comparison.** Marketplace versions compare by SemVer precedence (`1.0.0` is now offered
+  over `1.0.0-rc.1`). Community and system versions compare by Debian ordering.
+- **apt.** Updates come from `apt-get -s dist-upgrade` (held-back packages are not listed), search
+  escapes its query, and output is no longer cut at 64 KiB.
+
+### Changed — bayan 1.11 deprecations
+
+- `toml_get` → `bayan_toml_get_by_cstr` (35 sites: `recipe.cyr`, `ark_package.cyr`, `cli.cyr`).
+  Same answers; `toml_get` already forwarded to it.
+- `json_get(pairs, str_from("k"))` → `bayan_json_get_by_cstr(pairs, "k")` (3 sites in
+  `transaction.cyr`). Same answers.
+- `fuzz/ark.fcyr` called `json_get` with **cstring** keys, which a Str-keyed lookup never matches,
+  so its transaction-log target never reached past the lookup. It uses `_by_cstr` now.
+- bayan's tree parser now also refuses leading-zero numbers. ark writes numbers only through
+  `str_builder_add_int`, so it never writes one.
+
+### Changed — nous's error enum
+
+`ERR_INVALID_PACKAGE_NAME` → `NOUS_ERR_INVALID_PACKAGE_NAME` (nous 1.5.1; value unchanged).
+Two sites in `src/engine.cyr`.
+
+### Audited — the 6.7.10–6.7.18 changes that alter already-compiling code do not reach ark
+
+Read in full by three parallel reviews. 6.7.13 is not in the migration notes, so its CHANGELOG was
+read directly.
+
+- **ark's code has none of the shapes those releases change:** no structs, tuples, `?`, typed
+  pointers, slices, generics, floats, closures, asm, `const` or bool values. Its 9 enums use `;`
+  separators.
+- **No name collides** with the 6.7.18 stdlib or the dep bundles, apart from the nous/mela pair
+  above.
+- **Stdlib functions ark calls that changed** do so only on edge inputs or other platforms:
+  - DEFLATE rejects code-length sets zlib rejects, so the package fails closed.
+  - `dir_list` fails at once on a FIFO instead of blocking.
+  - `args_init` reads a command line past 2 MiB whole.
+  - The native TLS client refuses non-conformant servers.
+- **CI:** unchanged except as below.
+
+### CI
+
+- **Smoke test.** The shipped binary is the `CYRIUS_DCE=1` build, and CI had never run it. 6.7.18
+  now compacts it, removing 2,043,167 B of dead code. The new step runs `ark history` and a real
+  signed-`.ark` install into a scratch root, then checks the file and the one journal line.
+- `cyrius deps --locked`: `lib/` and `cyrius.lock` are exactly what the tags resolve.
+
+### Size and benchmarks
+
+- **Binary:** 3,731,336 → **1,861,896 B (−50.1 %)**. 6.7.18's DCE compacts on x86_64 ELF; 1.5.0's
+  build declined to past 4,096 dead-code runs, so it only NOP-filled.
+- **Warnings:** 7 → 3. mela 1.5.x dropped its three. One of the two `src/engine.cyr` "assigning
+  non-pointer to typed pointer" warnings, `ark_install_dir`'s `last_err = ares_message(r)`, no
+  longer fires. That code is unchanged, and the cause was not chased.
+
+`cyrius bench tests/ark.bcyr`, median of 3 alternating runs per side:
+
+| bench | 1.5.0 / 6.7.9 (µs) | 1.5.1 / 6.7.18 (µs) | Δ |
+|---|---|---|---|
+| cmd_create (100k) | 26,117 | 25,984 | −0.5 % |
+| config_default (100k) | 42,323 | 38,830 | **−8.3 %** |
+| source_to_str (100k) | 3,921 | 3,691 | **−5.9 %** |
+| group_meta_pkg (100k) | 5,226 | 5,829 | **+11.5 %** |
+| db_search_20 (10k) | 18,388 | 18,657 | +1.5 % |
+| db_total_size_20 (10k) | 5,756 | 5,752 | −0.1 % |
+| db_integrity_20 (10k) | 17,271 | 17,235 | −0.2 % |
+| txn_begin_commit (10k) | 38,678 | 38,130 | −1.4 % |
+| output_display (10k) | 6,470 | 6,584 | +1.8 % |
+
+- **Real, with no overlap between runs:** `config_default` −8.3 % (41,417–43,267 vs 38,044–38,987 µs),
+  `source_to_str` −5.9 %, and `group_meta_pkg` **+11.5 %** (5,179–5,280 vs 5,677–5,939 µs).
+- ⚖️ **`group_meta_pkg` is one `streq`**, and `streq`, `strlen` and `memeq` are unchanged in
+  source. So the ~6 ns per call comes from 6.7.18's codegen or layout. Not chased: it maps a group
+  name, not a hot path. nous saw the same kind of shift at its 6.7.9 move (`detect_source`
+  +6.8 %).
+- `output_display` +1.8 % is noise: 1.5.1's runs were 6,202 / 8,239 / 6,584 µs.
+- Appended to `bench-history.csv` (tagged `2026-11-13-1.5.1`).
+- Not benched: bayan 1.11's JSON parsing costs about 1.5× what it did by bayan's measure. The
+  `pkg_db_load` path that uses it has no bench.
+
+### Verified (default mode, from the pushed tags)
+
+- `cyrius deps --locked`: clean. `cyrius.lock` carries four commit pins: nous 1.7.4 @ `83c5c57`,
+  mela 1.5.2, agnostik 2.0.0 and bayan 1.11.1.
+- `cyrius test tests/ark.tcyr`: 453 / 0. `cyrius fuzz fuzz/ark.fcyr`: pass.
+- fmt (every module, both test files, the fuzz harness), lint (13 modules, 0 warnings), vet, deny:
+  clean. `cyrius doc src/*.cyr --check`: 95 documented / 304 undocumented (91 / 305 at 1.5.0).
+- The DCE binary: two real `ark install --apply --root <dir>` runs leave `txn-000001` /
+  `txn-000002` in the journal and a `packages.json` that parses. `history` and `update` exit 0. The
+  new CI smoke steps pass locally.
+- `cyrius build --agnos src/main.cyr`: OK.
+
 ## [1.5.0] - 2026-11-13
 
 **cyrius 6.6.20 → 6.7.9, every lib and dep on the 6.7.9 bundled / pinned version.** Build OK

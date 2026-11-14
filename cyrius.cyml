@@ -8,12 +8,19 @@ version = "${file:VERSION}"
 description = "ark - Cyrius port"
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "6.7.9"
+cyrius = "6.7.18"
 
 [build]
 entry = "src/main.cyr"
 output = "ark"
-defines = ["ARK_MAIN"]
+# NOUS_NO_BARE_JSON (nous >= 1.7.4) leaves out nous's deprecated bare
+# `manifest_from_json` / `update_from_json`, which mela defines with other parameter
+# types; ark calls mela's. It must be in [test] too: [build] defines do not reach
+# test / bench / fuzz builds.
+defines = ["ARK_MAIN", "NOUS_NO_BARE_JSON"]
+
+[test]
+defines = ["NOUS_NO_BARE_JSON"]
 
 # sigil, sankoch and sandhi ship folded into the cyrius stdlib, so they are stdlib
 # leaves here rather than `[deps.*]` git blocks.
@@ -25,19 +32,21 @@ stdlib = ["string", "fmt", "alloc", "vec", "str", "slice", "syscalls", "io", "ar
 # builds the tag. Each tag below is the last one pinned to this cyrius.
 [deps.nous]
 git = "https://github.com/MacCracken/nous.git"
-tag = "1.5.0"
+tag = "1.7.4"
 modules = ["dist/nous.cyr"]
 
 # mela — AGNOS marketplace layer (signed/integrity-checked/transparency-logged).
-# 0.9.3 namespaced its public API (mela_*) so it co-bundles with nous without
-# symbol collisions. agnostik is mela's transitive dep; sandhi (stdlib) supplies
-# the HTTP/TLS transport for marketplace downloads.
+# 0.9.3 namespaced its public API (mela_*) so it co-bundles with nous. Two
+# un-prefixed decoders, manifest_from_json / update_from_json, still match nous's
+# deprecated bare aliases, which NOUS_NO_BARE_JSON (above) leaves out. agnostik is
+# mela's transitive dep; sandhi (stdlib) supplies the HTTP/TLS transport for
+# marketplace downloads.
 [deps.mela]
 git = "https://github.com/MacCracken/mela.git"
-tag = "1.1.6"
+tag = "1.5.2"
 modules = ["dist/mela.cyr"]
 
 [deps.agnostik]
 git = "https://github.com/MacCracken/agnostik.git"
-tag = "1.12.0"
+tag = "2.0.0"
 modules = ["dist/agnostik.cyr"]

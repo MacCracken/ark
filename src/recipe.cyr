@@ -126,79 +126,79 @@ fn recipe_parse(data, len) {
 
         if (sname == 0 || str_len(sname) == 0) {
             # Top-level or [package] (first unnamed section)
-            var v = toml_get(pairs, "name");
+            var v = bayan_toml_get_by_cstr(pairs, "name");
             if (v > 0) { store64(r, v); }
-            v = toml_get(pairs, "version");
+            v = bayan_toml_get_by_cstr(pairs, "version");
             if (v > 0) { store64(r + 8, v); }
-            v = toml_get(pairs, "description");
+            v = bayan_toml_get_by_cstr(pairs, "description");
             if (v > 0) { store64(r + 16, v); }
-            v = toml_get(pairs, "license");
+            v = bayan_toml_get_by_cstr(pairs, "license");
             if (v > 0) { store64(r + 24, v); }
-            v = toml_get(pairs, "groups");
+            v = bayan_toml_get_by_cstr(pairs, "groups");
             if (v > 0) { store64(r + 32, ark_parse_toml_array(v)); }
-            v = toml_get(pairs, "release");
+            v = bayan_toml_get_by_cstr(pairs, "release");
             if (v > 0) { store64(r + 40, str_to_int(v)); }
-            v = toml_get(pairs, "arch");
+            v = bayan_toml_get_by_cstr(pairs, "arch");
             if (v > 0) { store64(r + 48, v); }
         }
         if (sname > 0 && str_eq(sname, str_from("package"))) {
-            var v = toml_get(pairs, "name");
+            var v = bayan_toml_get_by_cstr(pairs, "name");
             if (v > 0) { store64(r, v); }
-            v = toml_get(pairs, "version");
+            v = bayan_toml_get_by_cstr(pairs, "version");
             if (v > 0) { store64(r + 8, v); }
-            v = toml_get(pairs, "description");
+            v = bayan_toml_get_by_cstr(pairs, "description");
             if (v > 0) { store64(r + 16, v); }
-            v = toml_get(pairs, "license");
+            v = bayan_toml_get_by_cstr(pairs, "license");
             if (v > 0) { store64(r + 24, v); }
-            v = toml_get(pairs, "groups");
+            v = bayan_toml_get_by_cstr(pairs, "groups");
             if (v > 0) { store64(r + 32, ark_parse_toml_array(v)); }
-            v = toml_get(pairs, "release");
+            v = bayan_toml_get_by_cstr(pairs, "release");
             if (v > 0) { store64(r + 40, str_to_int(v)); }
-            v = toml_get(pairs, "arch");
+            v = bayan_toml_get_by_cstr(pairs, "arch");
             if (v > 0) { store64(r + 48, v); }
         }
         if (sname > 0 && str_eq(sname, str_from("source"))) {
-            var v = toml_get(pairs, "url");
+            var v = bayan_toml_get_by_cstr(pairs, "url");
             if (v > 0) { store64(r + 56, v); }
-            v = toml_get(pairs, "github_release");
+            v = bayan_toml_get_by_cstr(pairs, "github_release");
             if (v > 0 && load64(r + 56) == 0) { store64(r + 56, v); }
-            v = toml_get(pairs, "sha256");
+            v = bayan_toml_get_by_cstr(pairs, "sha256");
             if (v > 0) { store64(r + 64, v); }
         }
         if (sname > 0 && str_eq(sname, str_from("depends"))) {
-            var v = toml_get(pairs, "runtime");
+            var v = bayan_toml_get_by_cstr(pairs, "runtime");
             if (v > 0) { store64(r + 72, ark_parse_toml_array(v)); }
-            v = toml_get(pairs, "build");
+            v = bayan_toml_get_by_cstr(pairs, "build");
             if (v > 0) { store64(r + 80, ark_parse_toml_array(v)); }
         }
         if (sname > 0 && str_eq(sname, str_from("build"))) {
-            var v = toml_get(pairs, "configure");
+            var v = bayan_toml_get_by_cstr(pairs, "configure");
             if (v > 0) { store64(r + 88, v); }
-            v = toml_get(pairs, "make");
+            v = bayan_toml_get_by_cstr(pairs, "make");
             if (v > 0) { store64(r + 96, v); }
-            v = toml_get(pairs, "check");
+            v = bayan_toml_get_by_cstr(pairs, "check");
             if (v > 0) { store64(r + 104, v); }
-            v = toml_get(pairs, "install");
+            v = bayan_toml_get_by_cstr(pairs, "install");
             if (v > 0) { store64(r + 112, v); }
-            v = toml_get(pairs, "pre_build");
+            v = bayan_toml_get_by_cstr(pairs, "pre_build");
             if (v > 0) { store64(r + 120, v); }
-            v = toml_get(pairs, "post_install");
+            v = bayan_toml_get_by_cstr(pairs, "post_install");
             if (v > 0) { store64(r + 128, v); }
         }
         if (sname > 0 && str_eq(sname, str_from("security"))) {
-            var v = toml_get(pairs, "hardening");
+            var v = bayan_toml_get_by_cstr(pairs, "hardening");
             if (v > 0) { store64(r + 136, ark_parse_toml_array(v)); }
-            v = toml_get(pairs, "cflags");
+            v = bayan_toml_get_by_cstr(pairs, "cflags");
             if (v > 0) { store64(r + 144, v); }
-            v = toml_get(pairs, "ldflags");
+            v = bayan_toml_get_by_cstr(pairs, "ldflags");
             if (v > 0) { store64(r + 152, v); }
         }
         if (sname > 0 && str_eq(sname, str_from("marketplace"))) {
-            var v = toml_get(pairs, "category");
+            var v = bayan_toml_get_by_cstr(pairs, "category");
             if (v > 0) { store64(r + 160, v); }
-            v = toml_get(pairs, "runtime");
+            v = bayan_toml_get_by_cstr(pairs, "runtime");
             if (v > 0) { store64(r + 168, v); }
-            v = toml_get(pairs, "publisher");
+            v = bayan_toml_get_by_cstr(pairs, "publisher");
             if (v > 0) { store64(r + 176, v); }
         }
         si = si + 1;

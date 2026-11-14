@@ -127,13 +127,14 @@ fn txn_log_load(path) {
         var line = vec_get(lines, i);
         var pairs = 0;
         if (str_len(line) > 2) { pairs = json_parse(line); }
-        # json_get compares keys with str_eq, so they must be Strs: a cstring
-        # literal key never matched, and no record ever reloaded.
+        # The lookup must match the key's type: json_get (and bayan_json_get_by_str)
+        # take a Str, so the cstring literals passed until 1.4.3 never matched and no
+        # record reloaded. bayan 1.11 names both forms; these keys are literals.
         var id_val = 0;
-        if (pairs > 0) { id_val = json_get(pairs, str_from("id")); }
+        if (pairs > 0) { id_val = bayan_json_get_by_cstr(pairs, "id"); }
         if (id_val > 0) {
-            var user_val = json_get(pairs, str_from("user"));
-            var status_val = json_get(pairs, str_from("status"));
+            var user_val = bayan_json_get_by_cstr(pairs, "user");
+            var status_val = bayan_json_get_by_cstr(pairs, "status");
             # Parsed values are slices into the line, not NUL-terminated; the id
             # is a cstring map key, so give it its own terminated copy.
             id_val = str_from_buf(str_data(id_val), str_len(id_val));

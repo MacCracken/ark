@@ -49,6 +49,18 @@ jobs:
           mkdir -p build
           CYRIUS_DCE=1 cyrius build src/main.cyr build/ark   # ARK_MAIN comes from [build] defines (cyrius >= 6.6.17)
 
+      # The shipped binary is the CYRIUS_DCE=1 build, which cyrius 6.7.18 compacts (about
+      # 2 MB of dead code removed). Tests and benches compile their own binaries, so run
+      # this one: a real signed-.ark install into a scratch root.
+      - name: Smoke test
+        run: |
+          set -e
+          ./build/ark --no-color history
+          root="$(mktemp -d)"
+          ./build/ark --no-color install --apply --no-confirm --root "$root" tests/fixtures/sample-signed.ark
+          test -f "$root/usr/bin/app"
+          test "$(wc -l < "$root/var/lib/agnos/ark/transaction.log")" -eq 1
+
       - name: Test
         run: cyrius test tests/ark.tcyr
 

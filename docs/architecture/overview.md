@@ -17,7 +17,7 @@ ark (Cyrius binary; toolchain: the `cyrius` pin in cyrius.cyml)
   src/bazaar.cyr      -- community recipe catalog browse
   src/cli.cyr         -- parse_args, config load, confirmation, main()
   src/main.cyr        -- include barrel + entrypoint
-  tests/ark.tcyr      -- 434 assertions across the test groups (16 need ../zugot)
+  tests/ark.tcyr      -- 453 assertions across the test groups (16 need ../zugot)
   tests/ark.bcyr      -- benchmarks (manual timing)
   fuzz/ark.fcyr       -- fuzz harnesses (txn-log / pkg-name / CLI / JSON-escape / recipe)
 ```
@@ -145,16 +145,18 @@ due to compiler stdin pipe limitation with dot notation.
 
 ark consumes single-file `dist/*.cyr` library bundles (pinned in `cyrius.lock`)
 plus the Cyrius stdlib. It never reimplements resolution, crypto, or transport.
-Versions as of 1.5.0 (cyrius 6.7.9); `cyrius.cyml` / `cyrius.lock` are authoritative.
+Versions as of 1.5.1 (cyrius 6.7.18); `cyrius.cyml` / `cyrius.lock` are authoritative.
 
-- **nous** (1.5.0, git) -- Dependency resolution across system / marketplace /
+- **nous** (1.7.4, git) -- Dependency resolution across system / marketplace /
   flutter / community; pluggable `resolver_check_updates` for update detection.
-- **mela** (1.1.6, git) -- Marketplace client (download, `/latest` resolve) +
-  publisher keyring (the trust set for signature verification).
-- **agnostik** (1.12.0, git) -- Shared AGNOS manifest types (direct dep; also mela's).
-- **sigil** (3.13.11, folded into the stdlib) -- SHA-256 + Ed25519 (package
+- **mela** (1.5.2, git) -- Marketplace client (download, `/latest` resolve) +
+  publisher keyring. ark can build a trust set from a keyring (only key versions
+  valid now, since 1.5.1), but the install trust gate reads the flat `trust_keys`
+  file today; the keyring is not wired in (roadmap, "Found at 1.5.1").
+- **agnostik** (2.0.0, git) -- Shared AGNOS manifest types (direct dep; also mela's).
+- **sigil** (3.13.15, folded into the stdlib) -- SHA-256 + Ed25519 (package
   integrity & signatures).
-- **sandhi** (1.10.9, folded into the stdlib) -- HTTP/TLS transport for
+- **sandhi** (1.13.7, folded into the stdlib) -- HTTP/TLS transport for
   marketplace downloads (also mela's).
 - **stdlib** (`bayan` TOML/JSON, `sankoch` DEFLATE, `bench`, etc.) -- string,
   fmt, alloc, vec, str, syscalls, io, args, assert, hashmap, tagged, toml, json,

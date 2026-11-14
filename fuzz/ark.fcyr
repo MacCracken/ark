@@ -25,9 +25,9 @@ fn fuzz_jsonl(data, len) {
     var line = str_new(data, len);
     var pairs = json_parse(line);
     if (pairs > 0) {
-        var id_val = json_get(pairs, "id");
-        var user_val = json_get(pairs, "user");
-        var status_val = json_get(pairs, "status");
+        var id_val = bayan_json_get_by_cstr(pairs, "id");
+        var user_val = bayan_json_get_by_cstr(pairs, "user");
+        var status_val = bayan_json_get_by_cstr(pairs, "status");
         if (id_val > 0) {
             if (user_val == 0) { user_val = str_from(""); }
             if (status_val == 0) { status_val = str_from(""); }
