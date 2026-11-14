@@ -118,55 +118,48 @@ fn txn_log_load(path) {
     store64(p + 8, 0);
     store64(p + 16, path);
     store64(p + 24, map_new());
-    var path_cstr = str_data(path);
-    var fd = syscall(SYS_OPEN, path_cstr, O_RDONLY, 0);
-    if (fd >= 0) {
-        syscall(SYS_CLOSE, fd);
-        var buf = alloc(65536);
-        var bytes = file_read_all(path_cstr, buf, 524288);
-        if (bytes > 0) {
-            var content = str_new(buf, bytes);
-            var lines = str_split(content, str_from("\n"));
-            var i = 0;
-            while (i < vec_len(lines)) {
-                var line = vec_get(lines, i);
-                if (str_len(line) > 2) {
-                    var pairs = json_parse(line);
-                    if (pairs > 0) {
-                        var id_val = json_get(pairs, "id");
-                        var user_val = json_get(pairs, "user");
-                        var status_val = json_get(pairs, "status");
-                        if (id_val > 0) {
-                            if (user_val == 0) { user_val = str_from("unknown"); }
-                            if (status_val == 0) { status_val = str_from(""); }
-                            var txn = txn_new(id_val, user_val);
-                            if (streq(str_data(status_val), "Committed")) {
-                                txn_set_status(txn, TXN_COMMITTED);
-                            }
-                            if (streq(str_data(status_val), "RolledBack")) {
-                                txn_set_status(txn, TXN_ROLLED_BACK);
-                            }
-                            if (str_starts_with(id_val, str_from("txn-"))) {
-                                var num_str = str_sub(id_val, 4, str_len(id_val) - 4);
-                                var num = str_to_int(num_str);
-                                if (num >= tlog_next(p)) { tlog_set_next(p, num); }
-                            }
-                            var idx_map = tlog_index(p);
-                            var txns = tlog_txns(p);
-                            var id_cstr = str_data(txn_id(txn));
-                            var existing_idx = map_get(idx_map, id_cstr);
-                            if (existing_idx > 0) {
-                                vec_set(txns, existing_idx - 1, txn);
-                            } else {
-                                vec_push(txns, txn);
-                                map_set(idx_map, id_cstr, vec_len(txns));
-                            }
-                        }
-                    }
-                }
-                i = i + 1;
+    # An absent, empty or unreadable log loads as empty (the first commit creates it).
+    var content = ark_read_whole(str_data(path));
+    if (content == 0) { return p; }
+    var lines = str_split(content, str_from("\n"));
+    var i = 0;
+    while (i < vec_len(lines)) {
+        var line = vec_get(lines, i);
+        var pairs = 0;
+        if (str_len(line) > 2) { pairs = json_parse(line); }
+        # json_get compares keys with str_eq, so they must be Strs: a cstring
+        # literal key never matched, and no record ever reloaded.
+        var id_val = 0;
+        if (pairs > 0) { id_val = json_get(pairs, str_from("id")); }
+        if (id_val > 0) {
+            var user_val = json_get(pairs, str_from("user"));
+            var status_val = json_get(pairs, str_from("status"));
+            # Parsed values are slices into the line, not NUL-terminated; the id
+            # is a cstring map key, so give it its own terminated copy.
+            id_val = str_from_buf(str_data(id_val), str_len(id_val));
+            if (user_val == 0) { user_val = str_from("unknown"); }
+            if (status_val == 0) { status_val = str_from(""); }
+            var txn = txn_new(id_val, user_val);
+            if (str_eq_cstr(status_val, "Committed")) { txn_set_status(txn, TXN_COMMITTED); }
+            if (str_eq_cstr(status_val, "RolledBack")) { txn_set_status(txn, TXN_ROLLED_BACK); }
+            if (str_eq_cstr(status_val, "Failed")) { txn_set_status(txn, TXN_FAILED); }
+            if (str_starts_with(id_val, str_from("txn-"))) {
+                var num_str = str_sub(id_val, 4, str_len(id_val) - 4);
+                var num = str_to_int(num_str);
+                if (num >= tlog_next(p)) { tlog_set_next(p, num); }
+            }
+            var idx_map = tlog_index(p);
+            var txns = tlog_txns(p);
+            var id_cstr = str_data(txn_id(txn));
+            var existing_idx = map_get(idx_map, id_cstr);
+            if (existing_idx > 0) {
+                vec_set(txns, existing_idx - 1, txn);
+            } else {
+                vec_push(txns, txn);
+                map_set(idx_map, id_cstr, vec_len(txns));
             }
         }
+        i = i + 1;
     }
     return p;
 }

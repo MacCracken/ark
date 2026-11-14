@@ -126,7 +126,7 @@ fn ark_bazaar(mgr, subcmd, query) {
     var bdb = bazaar_db_load(bpath);
     var output = ark_output_new();
 
-    if (streq(str_data(subcmd), "search")) {
+    if (str_eq_cstr(subcmd, "search")) {
         var hsb = str_builder_new();
         str_builder_add_cstr(hsb, "Bazaar search: ");
         str_builder_add(hsb, query);
@@ -156,7 +156,7 @@ fn ark_bazaar(mgr, subcmd, query) {
         ark_output_add(output, output_line_info(
             str_from("Total"), str_builder_build(csb)));
     }
-    elif (streq(str_data(subcmd), "list")) {
+    elif (str_eq_cstr(subcmd, "list")) {
         ark_output_add(output, output_line_header(
             str_from("Bazaar community packages")));
         var all = bdb_recipes(bdb);
@@ -177,7 +177,7 @@ fn ark_bazaar(mgr, subcmd, query) {
         ark_output_add(output, output_line_info(
             str_from("Total"), str_builder_build(csb)));
     }
-    elif (streq(str_data(subcmd), "info")) {
+    elif (str_eq_cstr(subcmd, "info")) {
         if (str_len(query) == 0) {
             ark_output_add(output, output_line_error(
                 str_from("Usage: ark bazaar info <package>")));

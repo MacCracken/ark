@@ -2,7 +2,7 @@
 
 > Per-release detail lives in [CHANGELOG.md](../../CHANGELOG.md). This roadmap
 > tracks the *shape*: what has shipped, what's open, and the forward AGNOS /
-> sovereignty track. Current release: **1.1.3**.
+> sovereignty track. Current release: **1.4.3**.
 
 ## Shipped
 
@@ -39,9 +39,14 @@
   (its pluggable `resolver_check_updates`); `ark_check_updates` feeds nous the
   installed set from `PackageDb` + an `avail_fn` backed by mela's `/latest`
   (`marketplace_url` config). apt-only with no URL configured.
+- **1.4.3 (2026-11-13) — cyrius 6.6.20.** sigil + sandhi become stdlib leaves; nous /
+  mela / agnostik on their last 6.6.20-pinned tags; `path` overrides dropped. The
+  6.6.20 warnings led to three live bugs: config-file bools and `system_backend`
+  ignored (unterminated TOML slices), the transaction log never reloading, and a
+  heap overflow on any config / log / backup file past 64 KiB.
 
-**Deps (1.1.3):** cyrius 6.3.5; nous 1.3.0, sigil 3.9.7, mela 1.0.1, sandhi 1.7.0,
-agnostik 1.3.1, sankoch 2.4.6.
+**Deps (1.4.3):** cyrius 6.6.20; nous 1.4.1, mela 1.0.5, agnostik 1.7.1 (git);
+sigil 3.13.10, sandhi 1.10.8, sankoch 2.8.1, bayan 1.5.12 (cyrius stdlib).
 
 ### Capabilities (verified against code, 2026-06-29)
 
@@ -71,11 +76,9 @@ What ark does today, end to end:
 - **Cross-target.** Builds for x86_64-linux and (cross-compiles for) agnos; the
   syscall-divergent paths route through `src/portable.cyr`.
 
-## Moving the cyrius pin to 6.6.5
+## Moving the cyrius pin to 6.6.5 — pin moved to 6.6.20 at 1.4.3
 
-Nothing breaks at this bump. cyrius 6.6.5 is not tagged yet, and nothing
-below can land against the pin until it is. The pin is 6.6.2 today, and this
-section lists only what 6.6.5 itself changes.
+This section lists only what 6.6.5 itself changes.
 
 - [ ] 6.6.5 honours the `--check` in `cyrius doc src/main.cyr --check` (the
   cleanliness step at `CLAUDE.md:26` and `:39`). `src/main.cyr` defines no
@@ -84,11 +87,23 @@ section lists only what 6.6.5 itself changes.
   from 6.6.5), and document them or record a baseline. See the cyrius
   CHANGELOG [6.6.5] entry "The whole CLI took flags as file names, dropped
   flags written after the operand, and dropped extra operands".
-- [ ] At the bump, re-run `cyrius deps` — the aarch64 syscall peer moved
+  **Baseline at 1.4.3 (6.6.20):** `cyrius doc src/*.cyr --check` reports 91
+  documented / 305 undocumented and exits non-zero; `src/main.cyr` alone is
+  still 0 / 0.
+- [x] At the bump, re-run `cyrius deps` — the aarch64 syscall peer moved
   SYS_UNLINKAT 35 → 263, so an un-re-vendored peer's sys_unlink would run
-  nanosleep.
+  nanosleep. Done at 1.4.3 (`cyrius lib sync --full --relock` + `cyrius deps`).
 
 ## Open
+
+### Found at 1.4.3
+- [ ] **Persist transaction ops** so `ark rollback` works across processes.
+  `txn_log_persist` writes the op *count* only; a reloaded transaction has no
+  ops, and since 1.4.3 (when reload started working) `ark rollback` refuses one
+  rather than reporting a zero-step success. Needs each op's type / package /
+  version / source / from-version in the JSONL record, plus a reload test.
+- [ ] **zugot `marketplace/ark.cyml` is at 0.8.0** — never synced through 1.x.
+  Needs the 1.4.3 release asset's sha256, so it follows the tag.
 
 ### Quality-gate caveats (carried)
 - [ ] Coverage **metric** — `cyrius coverage` is non-actionable; coverage is
@@ -177,9 +192,13 @@ ark's remaining share (resolution stays in nous; build in takumi):
 - Metrics and telemetry (opt-in)
 - Offline mode with cached packages
 
-## Moving the cyrius pin to 6.6.6
+## Moving the cyrius pin to 6.6.6 — pin moved to 6.6.20 at 1.4.3
 
-Current pin: `cyrius = "6.6.2"` (`cyrius.cyml`).
+✅ Verified at 1.4.3: the suite passes (434 / 0, exit 0), and two real
+`ark install --apply --root <dir>` runs leave two records in the root's
+`transaction.log` (journal appends, ids continue `txn-000001` → `txn-000002`).
+The rollback leg of the cycle below cannot run across processes yet — see
+"Found at 1.4.3" under Open.
 
 The transaction log is the only part of ark that touches the 6.6.6 Windows fix.
 `src/transaction.cyr:198` opens it with
@@ -217,8 +236,10 @@ journal still accumulates records rather than replacing them.
 
 ⛔ Needs cyrius >= 6.7.6 — nothing to do until cyrius 6.7.6 is tagged; then at your pin bump:
 
-- **Git first: a `path` beside `git` / `tag` becomes a dev override** (here: `sigil`, `nous`, `mela`,
-  `agnostik`, `sandhi`).
+- **Git first: a `path` beside `git` / `tag` becomes a dev override** (here: `nous`, `mela`,
+  `agnostik`; sigil and sandhi are stdlib leaves since 1.4.3). ark 1.4.3 already dropped every
+  `path` line (under 6.6.x it won locally), so at 6.7.6 there is nothing to remove; add `path`
+  back only if you want local mode.
   From 6.7.6 it is read only in local mode (`CYRIUS_LOCAL=1`, `CYRIUS_LOCAL=<dep,dep>` or `--local`).
   With no switch, `cyrius deps` / `build` resolve the TAG (commit pin checked) and print one `hint:`
   line naming the checkout not used, so a local build and CI compile the same code.
@@ -235,5 +256,112 @@ cyrius no longer carries this repo's follow-ups; the items below were moved here
 applies from the cyrius version it names. Everything else that changes between this repo's pin and cyrius
 6.7.6 is in cyrius's `CHANGELOG.md` and `docs/development/ecosystem-migration.md`.
 
-- **(cyrius ≥ 6.6.17)** `[build] defines` is read by every `cyrius build`, so the `-D` flags on this repo's
-  `cyrius build` CI lines are redundant.
+- [x] **(cyrius ≥ 6.6.17)** `[build] defines` is read by every `cyrius build`, so the `-D` flags on this repo's
+  `cyrius build` CI lines are redundant. Dropped at 1.4.3 (binary byte-identical either way).
+
+## Adopting cmdit (CLI parsing)
+
+Surveyed 2026-10-14 against cmdit 1.2.6 (1.3.0 has the same API). Demand-gated, not a forced
+sweep, but ark is the case cmdit's single-pass `cmdit_dispatch` was built for: cmdit's README
+and ADR 0002 name ark's double scan as the bug to fix. All argv handling is in `src/cli.cyr`; the
+`getenv` calls (`cli.cyr:280,287`, `engine.cyr:16`, `exec.cyr:20`) read config, not flags.
+
+**Hand-rolled today**
+
+- `parse_args` (`cli.cyr:5-228`): a `streq` chain over 18 verbs + 4 aliases (`uninstall`, `ls`,
+  `show`, `baz`), each with its own `argv(i)` loop. Its `av` parameter is unused (`cli.cyr:389`).
+- **The double scan.** Pass 1 skips only a *leading* `--no-color` to find the verb
+  (`cli.cyr:11-12`); pass 2 in `main` re-walks all of argv for `--no-color` / `--apply` /
+  `--dry-run` / `--system-backend <v>` (`cli.cyr:392-411`). The passes disagree:
+  `ark --dry-run install x` is "Unknown command"; `ark search x --no-color` and
+  `ark list --dry-run` are "Unknown flag" (`cli.cyr:83,98`) while install/remove/upgrade carry
+  no-op arms (`cli.cyr:29-30,61-62,117`); verbs that skip `-` tokens keep a global's *value* as a
+  positional (`ark hold foo --system-backend native` also holds `native`, `cli.cyr:128`;
+  `rollback` targets txn `native`, `cli.cyr:189-192`); `bazaar` takes every token as its query
+  while pass 2 still applies globals inside it (`cli.cyr:207-218`); `--apply --dry-run` is
+  last-wins (`cli.cyr:395-396`). Audit M4 (`docs/audit/2026-04-16-p-1-security-audit.md:169`)
+  was a bug in the same leading-skip.
+- No `--help`, `--version` or `--`: `ark --help` prints "Unknown command. Available: …", exit 1.
+  Parse errors go to **stdout** (`println`), exit 1 (`cli.cyr:390`). A lone `-` is a flag.
+- `ARK_VERSION_STR = "1.4.1"` (`types.cyr:19`) has drifted from `VERSION` (1.4.2); fix it before
+  `--version` prints it.
+
+**Site → cmdit**
+
+- Globals on the top handle, consumed wherever they appear: `cmdit_bool` × 3 (`no-color`,
+  `apply`, `dry-run`) and `cmdit_enum(h, 0, "system-backend", 0, "apt|apt-agnos|aptagnos|native", …)`
+  mapped to `BACKEND_*` caller-side, overriding config only when `cmdit_seen`. Deletes pass 2 and
+  the no-op arms.
+- 18 `cmdit_verb` rows in today's order + `cmdit_verb_alias` × 4; switch on `cmdit_verb_matched`
+  (stiva's append-only `enum` pattern, `stiva/src/main.cyr:46-127`).
+- Per-verb handles via `cmdit_parse_verb`: install `-f/--force`, `-g/--group`, `--root`,
+  `--marketplace <url>`, `--dir`, `-y/--no-confirm`; remove `--purge`; search `-s/--source` as a
+  `cmdit_enum` over every `parse_source_str` spelling (`types.cyr:50-58`); list `--marketplace` /
+  `--system` / `--flutter`; pin `--source`. Scopes keep install's string `--marketplace` apart
+  from list's bool.
+- `cmdit_require_positionals(vh, 1)` for remove/hold/unhold/pin/unpin/info/restore. Caller-side
+  still: install's "≥1 package unless `--group`/`--dir`" (`cli.cyr:49-52`), search's query join,
+  `history [count]`'s `str_to_int`.
+- `bazaar`: keep `<subcmd> [query…]` as positionals and `ark_bazaar`'s own sub-dispatch
+  (`bazaar.cyr:129-241`); nested re-entry would turn today's exit-0 usage line for an unknown
+  sub-command into a cmdit error.
+- `cmdit_help`, `cmdit_version(h, ARK_VERSION_STR)`; `cmdit_print_error` lists commands from the
+  table on an unknown verb (replaces `cli.cyr:224-226`).
+
+**Gaps (none block)**
+
+- No long-name flag alias: list's `--market` / `--apt` (`cli.cyr:95-96`) need second
+  `cmdit_bool` rows OR'd caller-side, both shown in help. Candidate append-only cmdit addition if
+  another repo needs it.
+- Presence, not order: `--apply`/`--dry-run` and list's three source bools lose last-wins. Pick
+  a rule (reject both, or dry-run wins); mutex flags are cmdit v2 backlog.
+- `cmdit_completions` sees only the top handle (verbs + globals), not the per-verb flags
+  `completions/ark.bash:17-33` completes by hand. Those scripts are stale anyway (12 of 18 verbs,
+  none of `--apply`/`--dry-run`/`--system-backend`/`--root`/`--marketplace`/`--dir`/`-y`).
+
+**Migration**
+
+- [ ] `cyrius.cyml`: no stdlib `flags` to drop; `args` + `io` already present. No pin bump
+  (cmdit's dist compiles on 6.6.2). 1.3.0 is untagged as of 2026-10-14; 1.2.6 is the same API.
+  ```
+  [deps.cmdit]
+  git = "https://github.com/MacCracken/cmdit.git"
+  tag = "1.3.0"
+  modules = ["dist/cmdit.cyr"]
+  ```
+- [ ] Rebuild `parse_args` + `main`'s pass on `cmdit_dispatch_argv` (pure) so tests drive
+  synthetic argv; `main` calls `cmdit_dispatch`.
+- [ ] Tests: `test_parse_args` (`tests/ark.tcyr:34`) only builds `ArkCommand`s and never calls
+  `parse_args` — ark has **no** CLI parse test. Add synthetic-argv cases for every double-scan
+  row above. `fuzz/ark.fcyr:3` claims "CLI argument parsing" but `fuzz_source_parse` (`:77-83`)
+  fuzzes `parse_source_str` only — add a dispatch target or fix the header. Regenerate or
+  hand-update `completions/`.
+- [ ] Output identity: there is no golden, so capture one first — stdout, stderr and exit code
+  from `build/ark` (`ci.yml:48`) for every verb × each global before/after/absent, plus every
+  error path. Success paths stay byte-identical; error-path changes (stdout → stderr, exit 1 → 2,
+  message text) are a decision recorded in the CHANGELOG, or preserved by switching on
+  `cmdit_error(h)`.
+
+References: cmdit `README.md` (API reference) and `docs/adr/0002-verb-dispatch.md`
+(identify-and-return, nesting as re-entry); stiva `src/main.cyr` is the worked verb tool
+(36 verbs, per-verb handles, completions).
+
+**Update — cmdit 1.3.x / 1.4.0 (2026-10-14).** Two of the gaps above are closed:
+
+- **Long-name flag alias (1.3.6):** `cmdit_long_alias(vh, idx, "market")` gives list's `--marketplace` a second
+  name, and the same for `--system` / `--apt`. Both parse cores match it exactly, help shows
+  `--marketplace, --market`, and bash completion offers both. No second `cmdit_bool` row is needed.
+- **Per-verb flags in completions (1.3.7):** `cmdit_verb_flags(h, verb_id, vh)` attaches each verb's handle.
+  bash, zsh and fish then complete that verb's flags once it is typed, so `completions/ark.bash:17-33` and the
+  zsh/fish scripts can be generated from the handles that parse them. Aliases (`uninstall`, `ls`) select their
+  verb's list. `cmdit_verb_flags_at(h, cmdit_verb_matched(h))` returns the matched verb's handle after dispatch,
+  so the per-verb handles can be built once, up front.
+
+Not generated: the value lists `completions/ark.bash` completes after `--source|-s` and `--group|-g`, and
+global flags in zsh and fish. Those stay hand-written, or become a cmdit request.
+
+Also since the survey: `--bool=value` is refused with `CMDIT_ERR_UNEXPECTED_VALUE` (1.3.1); `cmdit_print_error`
+names the offending token (1.3.3); `cmdit_help_fd(h, 1)` prints help on stdout (1.3.5). 1.4.0 changes no API or
+output; it makes a parse about 2× faster and `--help` over 10× faster. Presence-not-order (`--apply` / `--dry-run`)
+is unchanged; mutex flags are still on cmdit's v2 backlog. Pin `tag = "1.4.0"` instead of `"1.3.0"` in the
+block above.

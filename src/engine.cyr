@@ -402,6 +402,16 @@ fn ark_rollback(mgr, txn_id_str) {
     if (txn_status(txn) != TXN_COMMITTED) {
         return ark_result_new(0, str_from("Transaction is not committed"), vec_new(), SOURCE_UNKNOWN);
     }
+    # The log records a transaction's op COUNT, not its ops (txn_log_persist), so
+    # a transaction reloaded from an earlier run has nothing to reverse. Refuse
+    # rather than report a successful zero-step rollback that changed nothing.
+    if (vec_len(txn_ops(txn)) == 0) {
+        var nsb = str_builder_new();
+        str_builder_add_cstr(nsb, "Transaction ");
+        str_builder_add(nsb, txn_id(txn));
+        str_builder_add_cstr(nsb, " has no recorded operations to reverse");
+        return ark_result_new(0, str_builder_build(nsb), vec_new(), SOURCE_UNKNOWN);
+    }
     # Build reverse plan
     var plan = install_plan_new();
     var ops = txn_ops(txn);
@@ -459,17 +469,16 @@ fn ark_backup(mgr) {
     str_builder_add(db_dst_sb, backup_dir);
     str_builder_add_cstr(db_dst_sb, "/packages.json");
     var db_dst = str_builder_build(db_dst_sb);
-    var buf = alloc(65536);
-    var n = file_read_all(str_data(db_src), buf, 524288);
-    if (n > 0) { file_write_all(str_data(db_dst), buf, n); }
+    var db = ark_read_whole(str_data(db_src));
+    if (db != 0) { file_write_all(str_data(db_dst), str_data(db), str_len(db)); }
     # Copy transaction log
     var log_src = acfg_log_path(cfg);
     var log_dst_sb = str_builder_new();
     str_builder_add(log_dst_sb, backup_dir);
     str_builder_add_cstr(log_dst_sb, "/transaction.log");
     var log_dst = str_builder_build(log_dst_sb);
-    n = file_read_all(str_data(log_src), buf, 524288);
-    if (n > 0) { file_write_all(str_data(log_dst), buf, n); }
+    var lg = ark_read_whole(str_data(log_src));
+    if (lg != 0) { file_write_all(str_data(log_dst), str_data(lg), str_len(lg)); }
     var msg_sb = str_builder_new();
     str_builder_add_cstr(msg_sb, "Backup created: ");
     str_builder_add(msg_sb, backup_dir);
@@ -479,19 +488,18 @@ fn ark_backup(mgr) {
 # Restore: copy backup files back to active paths
 fn ark_restore(mgr, backup_path) {
     var cfg = amgr_config(mgr);
-    var buf = alloc(65536);
     # Restore package DB
     var db_src_sb = str_builder_new();
     str_builder_add(db_src_sb, backup_path);
     str_builder_add_cstr(db_src_sb, "/packages.json");
-    var n = file_read_all(str_data(str_builder_build(db_src_sb)), buf, 524288);
-    if (n > 0) { file_write_all(str_data(acfg_db_path(cfg)), buf, n); }
+    var db = ark_read_whole(str_data(str_builder_build(db_src_sb)));
+    if (db != 0) { file_write_all(str_data(acfg_db_path(cfg)), str_data(db), str_len(db)); }
     # Restore transaction log
     var log_src_sb = str_builder_new();
     str_builder_add(log_src_sb, backup_path);
     str_builder_add_cstr(log_src_sb, "/transaction.log");
-    n = file_read_all(str_data(str_builder_build(log_src_sb)), buf, 524288);
-    if (n > 0) { file_write_all(str_data(acfg_log_path(cfg)), buf, n); }
+    var lg = ark_read_whole(str_data(str_builder_build(log_src_sb)));
+    if (lg != 0) { file_write_all(str_data(acfg_log_path(cfg)), str_data(lg), str_len(lg)); }
     var msg_sb = str_builder_new();
     str_builder_add_cstr(msg_sb, "Restored from: ");
     str_builder_add(msg_sb, backup_path);

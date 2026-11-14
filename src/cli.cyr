@@ -231,38 +231,46 @@ fn parse_args(ac, av) {
 # Config file loading (TOML)
 # =========================================================================
 
+# A config value as a NUL-terminated copy, or 0 when the key is absent.
+# toml_get hands back a slice into the file buffer, so str_data(value) ran on
+# into the rest of the file: a bool never compared equal (every bool key and
+# system_backend were ignored) and a path or URL key carried the lines after it.
+fn cfg_toml_str(pairs, key) {
+    var v = toml_get(pairs, key);
+    if (v == 0) { return 0; }
+    return str_from_buf(str_data(v), str_len(v));
+}
+
 fn load_config_from(path) {
     var config = ark_config_default();
-    var buf = alloc(65536);
-    var bytes = file_read_all(str_data(path), buf, 524288);
-    if (bytes <= 0) { return config; }
-    var content = str_new(buf, bytes);
+    var content = ark_read_whole(str_data(path));
+    if (content == 0) { return config; }
     var sections = toml_parse(content);
     if (sections == 0) { return config; }
     var i = 0;
     while (i < vec_len(sections)) {
         var section = vec_get(sections, i);
         var pairs = toml_section_pairs(section);
-        var val = toml_get(pairs, "color_output");
-        if (val > 0) { if (streq(str_data(val), "false")) { acfg_set_color(config, 0); } }
-        val = toml_get(pairs, "confirm_system_installs");
-        if (val > 0) { if (streq(str_data(val), "false")) { store64(config + 8, 0); } }
-        val = toml_get(pairs, "confirm_removals");
-        if (val > 0) { if (streq(str_data(val), "false")) { store64(config + 16, 0); } }
-        val = toml_get(pairs, "auto_update_check");
-        if (val > 0) { if (streq(str_data(val), "true")) { store64(config + 24, 1); } }
-        val = toml_get(pairs, "marketplace_dir");
+        var val = cfg_toml_str(pairs, "color_output");
+        if (val > 0) { if (str_eq_cstr(val, "false")) { acfg_set_color(config, 0); } }
+        val = cfg_toml_str(pairs, "confirm_system_installs");
+        if (val > 0) { if (str_eq_cstr(val, "false")) { store64(config + 8, 0); } }
+        val = cfg_toml_str(pairs, "confirm_removals");
+        if (val > 0) { if (str_eq_cstr(val, "false")) { store64(config + 16, 0); } }
+        val = cfg_toml_str(pairs, "auto_update_check");
+        if (val > 0) { if (str_eq_cstr(val, "true")) { store64(config + 24, 1); } }
+        val = cfg_toml_str(pairs, "marketplace_dir");
         if (val > 0) { store64(config + 40, val); }
-        val = toml_get(pairs, "cache_dir");
+        val = cfg_toml_str(pairs, "cache_dir");
         if (val > 0) { store64(config + 48, val); }
-        val = toml_get(pairs, "system_backend");
+        val = cfg_toml_str(pairs, "system_backend");
         if (val > 0) {
-            var br_t, br = parse_backend_str(str_data(val));
+            var br_t, br = parse_backend_str(str_cstr(val));
             if (is_ok(br_t)) { acfg_set_system_backend(config, result_unwrap(br_t, br)); }
         }
-        val = toml_get(pairs, "apt_wrapper");
+        val = cfg_toml_str(pairs, "apt_wrapper");
         if (val > 0) { acfg_set_apt_wrapper(config, val); }
-        val = toml_get(pairs, "marketplace_url");
+        val = cfg_toml_str(pairs, "marketplace_url");
         if (val > 0) { acfg_set_marketplace_url(config, val); }
         i = i + 1;
     }

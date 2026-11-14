@@ -183,16 +183,16 @@ var DB_SCHEMA_VERSION = 3;
 #     files load with defaults for any missing field (load guards absent keys).
 
 # DOM-value field readers (return a default when the key is absent or wrong-typed).
-# NOTE: keys MUST be raw cstr literals — bayan_json_v_obj_get does strlen/memeq on
+# NOTE: keys MUST be raw cstr literals — bayan_json_v_obj_get_by_cstr does strlen/memeq on
 # a char*, so a str_from() key silently returns 0.
 fn pdb_v_int_or(obj, key, dflt) {
-    var v = bayan_json_v_obj_get(obj, key);
+    var v = bayan_json_v_obj_get_by_cstr(obj, key);
     if (v == 0) { return dflt; }
     if (bayan_json_v_is_int(v) == 0) { return dflt; }
     return bayan_json_v_int(v);
 }
 fn pdb_v_str_or(obj, key, dflt) {
-    var v = bayan_json_v_obj_get(obj, key);
+    var v = bayan_json_v_obj_get_by_cstr(obj, key);
     if (v == 0) { return dflt; }
     if (bayan_json_v_is_str(v) == 0) { return dflt; }
     return bayan_json_v_str(v);
@@ -213,7 +213,7 @@ fn pdb_entry_from_json(name, e) {
     var ia = pdb_v_int_or(e, "installed_at", 0);
     if (ia > 0) { pdbe_set_installed_at(entry, ia); }
     # Owned files (array of paths).
-    var farr = bayan_json_v_obj_get(e, "files");
+    var farr = bayan_json_v_obj_get_by_cstr(e, "files");
     if (farr != 0) {
         if (bayan_json_v_is_arr(farr) == 1) {
             var fl = bayan_json_v_arr_len(farr);
@@ -226,7 +226,7 @@ fn pdb_entry_from_json(name, e) {
         }
     }
     # Per-file SHA-256 hashes (object path->hex).
-    var fco = bayan_json_v_obj_get(e, "file_checksums");
+    var fco = bayan_json_v_obj_get_by_cstr(e, "file_checksums");
     if (fco != 0) {
         if (bayan_json_v_is_obj(fco) == 1) {
             var fcn = bayan_json_v_obj_len(fco);
@@ -279,7 +279,7 @@ fn pkg_db_load(path) {
         return p;
     }
     if (bayan_json_v_is_obj(root) == 0) { pdb_set_loaded_ok(p, 0); return p; }
-    var pkgs = bayan_json_v_obj_get(root, "packages");
+    var pkgs = bayan_json_v_obj_get_by_cstr(root, "packages");
     if (pkgs == 0) { return p; }
     if (bayan_json_v_is_obj(pkgs) == 0) { return p; }
     var n = bayan_json_v_obj_len(pkgs);

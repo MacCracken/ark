@@ -113,6 +113,57 @@ fn test_ark_config() {
     assert(str_eq(acfg_log_path(cfg), str_from(DEFAULT_TRANSACTION_LOG_PATH)), "log path");
 }
 
+# 1 when Str `s` equals `lit` AND is NUL-terminated at its length, so its data
+# is safe to hand to a cstring consumer.
+fn str_is_terminated_cstr(s, lit) {
+    if (s == 0) { return 0; }
+    if (str_eq_cstr(s, lit) == 0) { return 0; }
+    return load8(str_data(s) + str_len(s)) == 0;
+}
+
+# The TOML config file, end to end. Nothing loaded one until 1.4.3.
+fn test_load_config_from() {
+    test_group("load_config_from");
+
+    var path = "/tmp/ark-test-config.toml";
+    var body = str_from("color_output = false\nconfirm_removals = false\nauto_update_check = true\nsystem_backend = \"native\"\n");
+    file_write_all(path, str_data(body), str_len(body));
+    var cfg = load_config_from(str_from(path));
+    assert_eq(acfg_color(cfg), 0, "color_output = false");
+    assert_eq(acfg_confirm_rm(cfg), 0, "confirm_removals = false");
+    assert_eq(acfg_confirm_sys(cfg), 1, "absent key keeps its default");
+    assert_eq(acfg_auto_update(cfg), 1, "auto_update_check = true");
+    assert_eq(acfg_system_backend(cfg), BACKEND_NATIVE, "system_backend = native");
+
+    # String keys feed cstring consumers (paths, argv), so each value must end at
+    # its own length, not run on into the next line of the file.
+    var sbody = str_from("cache_dir = \"/tmp/ark-c\"\nmarketplace_dir = \"/tmp/ark-m\"\napt_wrapper = \"agnos-apt\"\nmarketplace_url = \"https://m.example\"\ncolor_output = true\n");
+    file_write_all(path, str_data(sbody), str_len(sbody));
+    var scfg = load_config_from(str_from(path));
+    assert(str_is_terminated_cstr(acfg_cache_dir(scfg), "/tmp/ark-c"), "cache_dir is a terminated path");
+    assert(str_is_terminated_cstr(acfg_mkt_dir(scfg), "/tmp/ark-m"), "marketplace_dir is a terminated path");
+    assert(str_is_terminated_cstr(acfg_apt_wrapper(scfg), "agnos-apt"), "apt_wrapper is terminated");
+    assert(str_is_terminated_cstr(acfg_marketplace_url(scfg), "https://m.example"), "marketplace_url is terminated");
+
+    # Past 64 KiB: the loader's read buffer was 64 KiB with a 512 KiB cap.
+    var sb = str_builder_new();
+    var n = 0;
+    while (n < 1200) {
+        str_builder_add_cstr(sb, "# padding to push this file past the old 64 KiB read buffer\n");
+        n = n + 1;
+    }
+    str_builder_add_cstr(sb, "color_output = false\n");
+    var big = str_builder_build(sb);
+    assert_gt(str_len(big), 65536, "fixture is past 64 KiB");
+    file_write_all(path, str_data(big), str_len(big));
+    var cfg2 = load_config_from(str_from(path));
+    assert_eq(acfg_color(cfg2), 0, "a >64 KiB config is read to its last line");
+
+    xunlink(path);
+    var dflt = load_config_from(str_from(path));
+    assert_eq(acfg_color(dflt), 1, "absent file -> defaults");
+}
+
 # =========================================================================
 # PackageDb tests
 # =========================================================================
@@ -347,6 +398,65 @@ fn test_transaction_log() {
     assert(str_eq(txn_status_to_str(TXN_COMMITTED, str_from("")), str_from("committed")), "str committed");
     assert(str_eq(txn_status_to_str(TXN_ROLLED_BACK, str_from("")), str_from("rolled-back")), "str rolled-back");
     assert(str_eq(txn_status_to_str(TXN_FAILED, str_from("err")), str_from("failed: err")), "str failed");
+}
+
+# The on-disk round-trip: what commit/rollback append, txn_log_load must read
+# back. Nothing above reloads a log, so a loader that found no records passed.
+fn test_txn_log_reload() {
+    test_group("txn_log_reload");
+
+    var path = "/tmp/ark-test-txn-reload.log";
+    xunlink(path);
+    var log = txn_log_load(str_from(path));
+    assert_eq(txn_log_len(log), 0, "absent log loads empty");
+    var a = txn_log_begin(log, str_from("root"));
+    txn_log_commit(log, a);
+    var b = txn_log_begin(log, str_from("user1"));
+    txn_log_rollback(log, b);
+    var d = txn_log_begin(log, str_from("root"));
+    txn_log_fail(log, d, str_from("disk full"));
+
+    var re = txn_log_load(str_from(path));
+    assert_eq(txn_log_len(re), 3, "every record reloads");
+    var ra = txn_log_get(re, a);
+    var rb = txn_log_get(re, b);
+    var rd = txn_log_get(re, d);
+    assert_nonnull(ra, "committed txn found by id");
+    assert_nonnull(rb, "rolled-back txn found by id");
+    assert_nonnull(rd, "failed txn found by id");
+    if (ra != 0) { assert_eq(txn_status(ra), TXN_COMMITTED, "status committed"); }
+    if (ra != 0) { assert(str_eq(txn_user(ra), str_from("root")), "user kept"); }
+    if (rb != 0) { assert_eq(txn_status(rb), TXN_ROLLED_BACK, "status rolled back"); }
+    if (rd != 0) { assert_eq(txn_status(rd), TXN_FAILED, "status failed"); }
+    # Ids continue from the log, not from 1 again.
+    var c = txn_log_begin(re, str_from("root"));
+    assert(str_eq(c, str_from("txn-000004")), "next id continues after reload");
+
+    # A log past 64 KiB: the loader's read buffer was 64 KiB with a 512 KiB cap.
+    var big = "/tmp/ark-test-txn-reload-big.log";
+    xunlink(big);
+    var blog = txn_log_load(str_from(big));
+    var n = 0;
+    while (n < 1200) {
+        txn_log_commit(blog, txn_log_begin(blog, str_from("root")));
+        n = n + 1;
+    }
+    var bre = txn_log_load(str_from(big));
+    assert_eq(txn_log_len(bre), 1200, "a >64 KiB log reloads every record");
+    assert_nonnull(txn_log_get(bre, str_from("txn-001200")), "last record intact");
+
+    # A reloaded commit has no ops to reverse: rollback refuses, not a 0-step "success".
+    var rcfg = ark_config_default();
+    store64(rcfg + 56, str_from("/tmp/ark-test-txn-reload-db.json"));
+    store64(rcfg + 64, str_from(path));
+    acfg_set_apply(rcfg, APPLY_DRY);
+    var rmgr = ark_mgr_new(rcfg);
+    var rr = ark_rollback(rmgr, a);
+    assert_eq(ares_success(rr), 0, "reloaded op-less txn: rollback refused");
+    assert(str_contains(ares_message(rr), str_from("no recorded operations")), "refusal says why");
+    xunlink(path);
+    xunlink(big);
+    xunlink("/tmp/ark-test-txn-reload-db.json");
 }
 
 # =========================================================================
@@ -1583,6 +1693,8 @@ fn test_main() {
     test_pkg_security();
     test_install_root_wiring();
     test_install_dir_batch();
+    test_txn_log_reload();
+    test_load_config_from();
     return assert_summary();
 }
 

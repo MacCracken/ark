@@ -110,14 +110,14 @@ Syscall-divergent paths route through `src/portable.cyr` (ADR 0003).
 
 ark is written in [Cyrius](https://github.com/MacCracken/cyrius); it consumes
 single-file `dist/*.cyr` library bundles plus the Cyrius stdlib (`bayan`,
-`sankoch`, `bench`, etc.), pinned in `cyrius.lock`.
+`sankoch`, `sigil`, `sandhi`, `bench`, etc.), pinned in `cyrius.lock`.
 
 | Dependency | Purpose |
 |------------|---------|
 | [nous](https://github.com/MacCracken/nous) | Dependency resolution (system / marketplace / Flutter) |
-| [sigil](https://github.com/MacCracken/sigil) | SHA-256 + Ed25519 (integrity & signatures) |
+| [sigil](https://github.com/MacCracken/sigil) | SHA-256 + Ed25519 (integrity & signatures) — folded into the cyrius stdlib |
 | [mela](https://github.com/MacCracken/mela) | Marketplace client (download) + publisher keyring |
-| [sandhi](https://github.com/MacCracken/sandhi) | HTTP/TLS transport for marketplace downloads (direct dep; also mela's) |
+| [sandhi](https://github.com/MacCracken/sandhi) | HTTP/TLS transport for marketplace downloads — folded into the cyrius stdlib (also mela's) |
 | [agnostik](https://github.com/MacCracken/agnostik) | Shared AGNOS manifest types (direct dep; also mela's) |
 | `bayan` / `sankoch` (stdlib) | TOML/JSON + DEFLATE for `.ark` |
 

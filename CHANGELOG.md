@@ -5,6 +5,130 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.3] - 2026-11-13
+
+**cyrius 6.6.2 → 6.6.20, every lib and dep on the 6.6.20 bundled / pinned version, and three bugs
+the new toolchain's warnings led to.** Build OK (3,328,800 B), 434 passed / 0 failed, bench passes.
+
+### Changed — sigil and sandhi come in as stdlib leaves
+
+Both ship folded into the 6.6.20 stdlib, so their `[deps.*]` git blocks are gone and they are
+listed in `[deps] stdlib` (sankoch already was). Under 6.6.2 the git dep and the stdlib leaf
+competed for the same `lib/` file — `cyrius deps` warned "refusing to overwrite stdlib leaf" and
+kept the snapshot — so this states what was already being built. The remaining git deps move to
+the last tag of each that pins cyrius 6.6.20, the same set mela 1.0.4/1.0.5 moved to.
+
+| dep | was | now |
+|---|---|---|
+| sigil | 3.12.16 (git) | **3.13.10** (stdlib) |
+| sandhi | 1.9.16 (git) | **1.10.8** (stdlib) |
+| sankoch | 2.7.14 (stdlib) | **2.8.1** (stdlib) |
+| bayan | 1.5.5 (stdlib) | **1.5.12** (stdlib) |
+| sakshi | 2.5.1 (stdlib) | **2.5.7** (stdlib) |
+| nous | 1.4.0 | **1.4.1** |
+| mela | 1.0.3 | **1.0.5** |
+| agnostik | 1.6.0 | **1.7.1** |
+
+`lib/nous.cyr`, `lib/mela.cyr` and `lib/agnostik.cyr` are byte-identical to their tags' `dist/`;
+each tag was checked against `git ls-remote`, and its commit matches the pin `cyrius.lock` records.
+
+### Changed — `path = "../<dep>"` overrides removed from `cyrius.cyml`
+
+Under 6.6.x a `path` beside `git`/`tag` wins locally, so any local `cyrius build` compiled the
+sibling checkout's **main** — nous, mela and agnostik main all pin cyrius 6.7.18 — and rewrote
+`lib/` and `cyrius.lock` with it, while CI cloned the tag. A local build now resolves the same tags
+CI does. (From cyrius 6.7.6 a `path` is a local-mode-only override; see the roadmap.)
+
+### Changed — vendored stdlib re-synced to the 6.6.20 snapshot
+
+`cyrius lib sync --full --relock`: every stdlib leaf in `lib/` is byte-identical to
+`~/.cyrius/versions/6.6.20/lib`. New leaves: `alloc_cx`, `poison`, `tls_hostid`. No orphans.
+
+### Fixed — ⛔ the config file's booleans and `system_backend` were ignored
+
+`load_config_from` compared each TOML value with `streq(str_data(val), "false")`. bayan's values
+are **slices into the file buffer**, not NUL-terminated, so the comparison read on into the next
+line and never matched: `color_output`, `confirm_system_installs`, `confirm_removals`,
+`auto_update_check` and `system_backend` had **no effect** from any config file. The string keys
+(`marketplace_dir`, `cache_dir`, `apt_wrapper`, `marketplace_url`) were stored as the same slices,
+so each one handed to a cstring consumer carried the rest of the file after it. Found by 6.6.20's
+new "passing a Str's data pointer to a cstring parameter" warning. Each value is now a terminated
+copy (`cfg_toml_str`). New `load_config_from` test group (the loader had none): run against the
+1.4.2 sources, 9 of its 12 assertions fail.
+
+### Fixed — ⛔ the transaction log never reloaded
+
+`txn_log_load` looked up `"id"` / `"user"` / `"status"` with `json_get`, which compares keys with
+`str_eq` — **Str** keys. A cstring literal never matched, so every process started with an empty
+log: `ark history` showed only the current run, and every run's first transaction was
+`txn-000001` again (two installs on 1.4.2 write two `txn-000001` records). The keys are Strs now,
+the reloaded id is a terminated copy (it is a cstring map key), and a `Failed` record reloads as
+failed. Ids continue from the log. New `txn_log_reload` test group: 8 of its 14 assertions fail
+against the 1.4.2 sources.
+
+⚠ **Consequence for `ark rollback`.** The log stores a transaction's op *count*, not its ops, so a
+transaction reloaded from an earlier run has nothing to reverse. `ark rollback` now refuses one
+("Transaction txn-… has no recorded operations to reverse") instead of reporting a successful
+zero-step rollback. Before this release it could not find one at all ("No transaction found to
+rollback"), so no working path is lost. Rolling back across processes needs the ops persisted —
+not done here.
+
+### Fixed — ⛔ heap overflow on any config, log or backup file past 64 KiB
+
+Six reads paired `alloc(65536)` with a `file_read_all(..., 524288)` cap: the config loader, the
+transaction-log loader, and both files in `ark backup` and `ark restore`. A file past 64 KiB wrote
+up to 448 KiB beyond its buffer. The transaction log grows with every install, so this was
+reachable in normal use. (`recipe.cyr` fixed the same pairing earlier.) All six now go through
+`ark_read_whole` (`src/portable.cyr`), which sizes the buffer to the file up to 64 MiB — the same
+grow-until-EOF loop `pkg_db_load` uses. Backup and restore no longer silently truncate at 512 KiB.
+The loader also drops its raw `syscall(SYS_OPEN)` existence probe.
+
+### Changed — 6.6.20 deprecations and warnings
+
+- `bayan_json_v_obj_get` → `bayan_json_v_obj_get_by_cstr` (5 sites in `src/db.cyr`; every key is a
+  literal). No behaviour change: the deprecated name already forwarded to `_by_cstr`.
+- `ark bazaar`'s sub-command match: `streq(str_data(subcmd), …)` → `str_eq_cstr(subcmd, …)`.
+- Build warnings 12 → 7. What remains all predates this release: 3 "assigning non-pointer to
+  typed pointer" in `src/`, 3 in `lib/mela.cyr`, and "large static data". The 6.6.2 "refusing to
+  overwrite stdlib leaf" and duplicate `_hex_nibble` warnings are gone.
+
+### Changed — `ARK_VERSION_STR` drift
+
+`src/types.cyr` said `1.4.1` through all of 1.4.2. Now `1.4.3`.
+
+### CI — `-D ARK_MAIN` dropped
+
+cyrius 6.6.17+ reads `[build] defines` on every `cyrius build`. The flag was redundant: the binary
+is byte-identical with and without it.
+
+### Size and benchmarks
+
+The binary grows 2,930,816 → **3,328,800 B (+13.6 %)**: about +269 KB reachable code and +128 KB
+dead code, all in the newer vendored bundles (`CYRIUS_DCE=1` only NOP-fills on x86_64 ELF here, so
+it does not shrink the file). `cyrius bench tests/ark.bcyr`, median of 3 alternating runs per side:
+
+| bench | 6.6.2 (µs) | 6.6.20 (µs) | Δ |
+|---|---|---|---|
+| cmd_create (100k) | 26,486 | 27,215 | +2.8 % |
+| config_default (100k) | 48,479 | 41,677 | −14.0 % |
+| source_to_str (100k) | 5,174 | 4,346 | −16.0 % |
+| group_meta_pkg (100k) | 5,289 | 5,433 | +2.7 % |
+| db_search_20 (10k) | 18,406 | 19,148 | +4.0 % |
+| db_total_size_20 (10k) | 5,753 | 5,966 | +3.7 % |
+| db_integrity_20 (10k) | 17,825 | 18,065 | +1.3 % |
+| txn_begin_commit (10k) | 39,459 | 39,588 | +0.3 % |
+| output_display (10k) | 7,369 | 6,639 | −9.9 % |
+
+None of the benched paths changed in `src/`; the movement is toolchain and stdlib. Appended to
+`bench-history.csv`.
+
+### Tests
+
+392 → 434 assertions. 16 of those are the zugot-corpus assertions, which only run when `../zugot`
+exists (it did not for the 1.4.2 figure). The 26 new ones are the `txn_log_reload` and
+`load_config_from` groups: reload of committed / rolled-back / failed records, id continuation,
+a >64 KiB log and config, terminated string values, and the rollback refusal.
+
 ## [1.4.2] - 2026-09-10
 
 **cyrius 6.3.38 → 6.6.2, every dep brought current, and a silent mis-bind removed.**

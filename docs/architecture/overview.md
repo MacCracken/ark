@@ -3,7 +3,7 @@
 ## Module Map
 
 ```
-ark (Cyrius binary; toolchain cyrius 6.3.38)
+ark (Cyrius binary; toolchain: the `cyrius` pin in cyrius.cyml)
   src/types.cyr       -- constants, enums, struct accessors (ArkConfig, ArkCommand, InstallPlan/Step)
   src/portable.cyr    -- host/agnos syscall portability shims (ADR 0003)
   src/output.cyr      -- ArkOutputLine, ArkOutput, rendering
@@ -17,7 +17,7 @@ ark (Cyrius binary; toolchain cyrius 6.3.38)
   src/bazaar.cyr      -- community recipe catalog browse
   src/cli.cyr         -- parse_args, config load, confirmation, main()
   src/main.cyr        -- include barrel + entrypoint
-  tests/ark.tcyr      -- 399 assertions across the test groups
+  tests/ark.tcyr      -- 434 assertions across the test groups (16 need ../zugot)
   tests/ark.bcyr      -- benchmarks (manual timing)
   fuzz/ark.fcyr       -- fuzz harnesses (txn-log / pkg-name / CLI / JSON-escape / recipe)
 ```
@@ -145,15 +145,17 @@ due to compiler stdin pipe limitation with dot notation.
 
 ark consumes single-file `dist/*.cyr` library bundles (pinned in `cyrius.lock`)
 plus the Cyrius stdlib. It never reimplements resolution, crypto, or transport.
+Versions as of 1.4.3 (cyrius 6.6.20); `cyrius.cyml` / `cyrius.lock` are authoritative.
 
-- **nous** (1.3.0) -- Dependency resolution across system / marketplace /
+- **nous** (1.4.1, git) -- Dependency resolution across system / marketplace /
   flutter / community; pluggable `resolver_check_updates` for update detection.
-- **sigil** (3.9.7) -- SHA-256 + Ed25519 (package integrity & signatures).
-- **mela** (1.0.1) -- Marketplace client (download, `/latest` resolve) +
+- **mela** (1.0.5, git) -- Marketplace client (download, `/latest` resolve) +
   publisher keyring (the trust set for signature verification).
-- **sandhi** (1.7.0) -- HTTP/TLS transport for marketplace downloads (direct
-  dep; also pulled transitively by mela).
-- **agnostik** (1.3.1) -- Shared AGNOS manifest types (direct dep; also mela's).
+- **agnostik** (1.7.1, git) -- Shared AGNOS manifest types (direct dep; also mela's).
+- **sigil** (3.13.10, folded into the stdlib) -- SHA-256 + Ed25519 (package
+  integrity & signatures).
+- **sandhi** (1.10.8, folded into the stdlib) -- HTTP/TLS transport for
+  marketplace downloads (also mela's).
 - **stdlib** (`bayan` TOML/JSON, `sankoch` DEFLATE, `bench`, etc.) -- string,
   fmt, alloc, vec, str, syscalls, io, args, assert, hashmap, tagged, toml, json,
   fs, fnptr, callback, bench, regex.

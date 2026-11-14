@@ -6,7 +6,7 @@
 
 - **Type**: Binary
 - **License**: GPL-3.0-only
-- **Min toolchain**: cyrius 6.3.5 (pinned in `.cyrius-toolchain` / `cyrius.cyml`)
+- **Min toolchain**: the `cyrius` pin in `cyrius.cyml` — the single source of truth, not restated here (`.cyrius-toolchain` was removed in 1.4.2)
 - **Versioning**: SemVer (current version tracked in `VERSION` / CHANGELOG)
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Philosophy**: [AGNOS Philosophy & Intention](https://github.com/MacCracken/agnosticos/blob/main/docs/philosophy.md)

@@ -103,3 +103,25 @@ fn ark_symlink_supported() {
     return 1;
     #endif
 }
+
+# Read a whole file into a buffer sized to it; a Str over the bytes, or 0 when
+# the file is absent, empty, unreadable, or larger than the 64 MiB ceiling.
+# file_read_all stops at maxlen and gives no truncation signal, so the buffer
+# grows until a read no longer fills it. Six callers used to pair alloc(65536)
+# with a 524288 read cap, which overflowed the heap for any file past 64 KiB.
+# A caller must treat 0 as "nothing to act on" rather than act on a prefix.
+fn ark_read_whole(pathc) {
+    var cap = 65536;
+    var buf = alloc(cap);
+    if (buf == 0) { return 0; }
+    var n = file_read_all(pathc, buf, cap);
+    while (n >= cap && cap < 67108864) {
+        cap = cap * 2;
+        buf = alloc(cap);
+        if (buf == 0) { return 0; }
+        n = file_read_all(pathc, buf, cap);
+    }
+    if (n <= 0) { return 0; }
+    if (n >= cap) { return 0; }
+    return str_new(buf, n);
+}

@@ -44,7 +44,7 @@ jobs:
         run: |
           cyrius deps
           mkdir -p build
-          CYRIUS_DCE=1 cyrius build -D ARK_MAIN src/main.cyr build/ark
+          CYRIUS_DCE=1 cyrius build src/main.cyr build/ark   # ARK_MAIN comes from [build] defines (cyrius >= 6.6.17)
 
       - name: Create release
         uses: softprops/action-gh-release@v2
