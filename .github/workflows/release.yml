@@ -42,7 +42,7 @@ jobs:
 
       - name: Build
         run: |
-          cyrius deps
+          cyrius deps --locked   # cyrius >= 6.7.6: refuse a lib/ or lock that drifted from the tags
           mkdir -p build
           CYRIUS_DCE=1 cyrius build src/main.cyr build/ark   # ARK_MAIN comes from [build] defines (cyrius >= 6.6.17)
 

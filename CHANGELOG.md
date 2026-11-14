@@ -5,6 +5,124 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.5.0] - 2026-11-13
+
+**cyrius 6.6.20 → 6.7.9, every lib and dep on the 6.7.9 bundled / pinned version.** Build OK
+(3,731,336 B), 434 passed / 0 failed, fuzz passes, bench flat. The only ark source change is
+`ARK_VERSION_STR`. The toolchain needed no `src/` change; the fuzz harness did (see Fixed).
+
+### Changed — deps on the 6.7.9 line
+
+| dep | was | now |
+|---|---|---|
+| nous | 1.4.1 | **1.5.0** (git; no public API change) |
+| mela | 1.0.5 | **1.1.6** (git; see *Inherited from mela 1.1.x*) |
+| agnostik | 1.7.1 | **1.12.0** (git; additive only, the version mela 1.1.6 pins) |
+| sigil | 3.13.10 | **3.13.11** (stdlib) |
+| sandhi | 1.10.8 | **1.10.9** (stdlib) |
+| sankoch | 2.8.1 | **2.8.3** (stdlib) |
+| bayan | 1.5.12 | **1.5.13** (stdlib) |
+| sakshi | 2.5.7 | **2.5.8** (stdlib) |
+
+Each git tag is the last one that pins cyrius 6.7.9. All three were checked against
+`git ls-remote`, and each tag's commit matches the pin `cyrius.lock` records. `lib/nous.cyr`,
+`lib/mela.cyr` and `lib/agnostik.cyr` are byte-identical to their tags' `dist/`. All 12 mela
+functions ark calls, including the private `_rc_http_get`, keep their 1.0.5 signatures.
+
+### Changed — vendored stdlib re-synced to the 6.7.9 snapshot
+
+`cyrius lib sync --full --relock`, then `cyrius deps`. Every stdlib leaf in `lib/` (including
+`lib/unicode/`) is byte-identical to `~/.cyrius/versions/6.7.9/lib`, there are no orphans, and
+`cyrius deps --locked` reports that `lib/` and `cyrius.lock` are exactly what the tags resolve.
+
+### Audited — the 6.7.x changes that alter already-compiling code do not reach ark
+
+A green suite proves nothing about these, because the code still compiles. Method: a comment- and
+string-stripped scan of `src/`, `tests/` and `fuzz/` (5,411 code lines) for each shape.
+
+| Change (cyrius) | What it changed | What ark has |
+|---|---|---|
+| A lone `!` (6.7.3) | Silently dropped before 6.7.3, so `if (!ok)` ran as `if (ok)` | None. ark spells it `== 0` |
+| Unary `-` / `~` on a constant before a literal operator (bug 6.6.10–6.7.8, fixed 6.7.9) | `-K + 10` was 15 | No unary `-` or `~` anywhere (ark writes `0 - 1`), so 1.4.3 on 6.6.20 was not affected either |
+| Typed `*T` step leaking through operators (fixed 6.7.9); narrow `*p` reads and writes the element (6.7.8) | `(x == q) + 100` stepped by `sizeof(T)`; `*p` through a `*u8` read 8 bytes | No typed pointers, no `*p` dereference |
+| Signed slice elements read negative (6.7.8) | `[i8]` 0xFD read 253, now -3 | No slices |
+| Method / generic results typed by the method (fixed 6.7.9); by-value struct argument order (6.7.7) | `p.m(1.5) * 2` multiplied bit patterns | No methods, generics, floats or `struct` declarations |
+| `fncall8` arguments 7 and 8 (6.7.6); `fhm_set` overwrite (6.7.9) | swapped / rebuilt the table | No `fncall*` and no `hashmap_fast` in `src/` |
+| The exec family resets child signal state (6.7.9) | Children start with SIGPIPE / SIGXFSZ at default and an empty mask | ark never ignores or blocks a signal, so its children start the same as before. The one `signal_ignore` in `lib/` is sandhi's SIGPIPE guard, which runs only in sandhi's server loops; ark, mela, nous and agnostik call none of them |
+
+The 6.7.x changes that turn a silent miscompile into a compile error, such as an unmatched `}` at
+module scope, a `for` step on an undeclared name, or `true` / `do` / `dyn` / `const` as names,
+would have stopped the build. It builds with the same 7 warnings as 1.4.3.
+
+### Inherited from mela 1.1.x — what ark users see
+
+- **Marketplace downloads over 256 KiB work.** mela 1.1.3 (D7): artifact downloads failed past
+  256 KiB and could hang forever. `ark install --marketplace` goes through `mela_fetch_artifact`.
+- **A failed download leaves nothing at the cache path.** `mela_fetch_artifact` now removes
+  `dest_path` on failure. ark treats an existing file there as a cache hit, so a leftover file was
+  installed from and failed verification (fail-closed) until removed by hand.
+- **`resolve-"latest"` is stricter.** `manifest_from_json` returns 0 for a manifest with an
+  unknown, missing or non-string `category`, and ark reports the latest version as unknown.
+- **Key files must spell out `has_until`.** A key version without it used to decode as "never
+  expires" into ark's trust set. It is now rejected.
+- **`sanitize_filename` keeps non-ASCII letters,** so a non-ASCII package name or version gets a
+  different cache file name (the next install re-downloads it). ASCII names are unchanged.
+- mela now compiles in the stdlib Unicode tables, which by mela's own measure add about 170 KB.
+
+### Fixed — the fuzz harness had not compiled since 1.4.2
+
+`fuzz/ark.fcyr` still called `recipe_parse` in the pre-6.6 single-value form
+(`result_unwrap(rr)`). 1.4.2's value-form migration covered `src/` only, and CI never ran the
+harness, so nothing showed it. It now binds both values, as `src/` does, and passes. **CI runs
+it** (a `Fuzz` step, about 3.5 s).
+
+### CI — `cyrius deps --locked`
+
+CI and release resolved with `cyrius deps`, which rewrites the tracked `lib/` and `cyrius.lock`
+to match the tags and so hides drift. They now use `cyrius deps --locked` (cyrius 6.7.6+), which
+writes nothing and fails naming each difference.
+
+### Known
+
+- **The trust set includes expired publisher keys** (pre-existing, unchanged here).
+  `ark_trust_from_keyring` takes every version `mela_keyring_get_all_versions` returns, and by
+  mela's contract that includes expired ones. A policy decision, tracked in the roadmap.
+- **Toolchain finding, not an ark defect:** `cyrius.lock` keeps the commit pin of every tag ever
+  resolved. The 1.4.3 pins for nous 1.4.1, mela 1.0.5 and agnostik 1.7.1 stay beside the new ones,
+  and `cyrius deps --relock` keeps them too. Nothing reads a pin for a tag ark does not use, and
+  mela 1.1.6's own lock shows the same. Left as cyrius writes it.
+
+### Size and benchmarks
+
+The binary grows 3,328,800 → **3,731,336 B (+12.1 %)**: +333,788 B reachable and +68,748 B dead
+code, all in the newer vendored bundles. The agnos build grows 3,284,760 → 3,687,328 B.
+`cyrius bench tests/ark.bcyr`, median of 3 alternating runs per side:
+
+| bench | 1.4.3 / 6.6.20 (µs) | 1.5.0 / 6.7.9 (µs) | Δ |
+|---|---|---|---|
+| cmd_create (100k) | 26,862 | 26,193 | −2.5 % |
+| config_default (100k) | 41,708 | 41,632 | −0.2 % |
+| source_to_str (100k) | 4,206 | 3,890 | **−7.5 %** |
+| group_meta_pkg (100k) | 5,242 | 5,214 | −0.5 % |
+| db_search_20 (10k) | 18,386 | 18,530 | +0.8 % |
+| db_total_size_20 (10k) | 5,702 | 5,872 | +3.0 % |
+| db_integrity_20 (10k) | 17,306 | 17,300 | 0.0 % |
+| txn_begin_commit (10k) | 38,406 | 38,473 | +0.2 % |
+| output_display (10k) | 6,406 | 6,408 | 0.0 % |
+
+- `source_to_str` −7.5 % is real: the runs spanned 4,169–4,219 µs on 1.4.3 and 3,849–3,896 µs on
+  1.5.0, with no overlap. Its path is unchanged in `src/`, so this comes from the toolchain.
+- `db_total_size_20` +3.0 % is noise: 1.5.0's three runs were 5,719 / 5,872 / 6,759 µs.
+- Everything else overlaps run to run. Appended to `bench-history.csv` (tagged `2026-11-13-1.5.0`).
+
+### Verified
+
+- `cyrius test tests/ark.tcyr`: 434 / 0. `cyrius fuzz fuzz/ark.fcyr`: pass.
+- fmt (every module, both test files and the fuzz harness), lint (13 modules, 0 warnings), vet,
+  deny: clean. `cyrius doc src/*.cyr --check` is still 91 documented / 305 undocumented.
+- Two real `ark install --apply --root <dir>` runs leave `txn-000001` and `txn-000002` in the
+  root's `transaction.log`, so the journal appends and ids continue across processes.
+
 ## [1.4.3] - 2026-11-13
 
 **cyrius 6.6.2 → 6.6.20, every lib and dep on the 6.6.20 bundled / pinned version, and three bugs

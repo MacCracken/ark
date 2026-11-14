@@ -145,16 +145,16 @@ due to compiler stdin pipe limitation with dot notation.
 
 ark consumes single-file `dist/*.cyr` library bundles (pinned in `cyrius.lock`)
 plus the Cyrius stdlib. It never reimplements resolution, crypto, or transport.
-Versions as of 1.4.3 (cyrius 6.6.20); `cyrius.cyml` / `cyrius.lock` are authoritative.
+Versions as of 1.5.0 (cyrius 6.7.9); `cyrius.cyml` / `cyrius.lock` are authoritative.
 
-- **nous** (1.4.1, git) -- Dependency resolution across system / marketplace /
+- **nous** (1.5.0, git) -- Dependency resolution across system / marketplace /
   flutter / community; pluggable `resolver_check_updates` for update detection.
-- **mela** (1.0.5, git) -- Marketplace client (download, `/latest` resolve) +
+- **mela** (1.1.6, git) -- Marketplace client (download, `/latest` resolve) +
   publisher keyring (the trust set for signature verification).
-- **agnostik** (1.7.1, git) -- Shared AGNOS manifest types (direct dep; also mela's).
-- **sigil** (3.13.10, folded into the stdlib) -- SHA-256 + Ed25519 (package
+- **agnostik** (1.12.0, git) -- Shared AGNOS manifest types (direct dep; also mela's).
+- **sigil** (3.13.11, folded into the stdlib) -- SHA-256 + Ed25519 (package
   integrity & signatures).
-- **sandhi** (1.10.8, folded into the stdlib) -- HTTP/TLS transport for
+- **sandhi** (1.10.9, folded into the stdlib) -- HTTP/TLS transport for
   marketplace downloads (also mela's).
 - **stdlib** (`bayan` TOML/JSON, `sankoch` DEFLATE, `bench`, etc.) -- string,
   fmt, alloc, vec, str, syscalls, io, args, assert, hashmap, tagged, toml, json,

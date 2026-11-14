@@ -90,9 +90,9 @@ fn fuzz_source_parse(data, len) {
 # =========================================================================
 
 fn fuzz_recipe(data, len) {
-    var rr = recipe_parse(data, len);
-    if (is_ok(rr) == 1) {
-        var r = result_unwrap(rr);
+    var rr_t, rr = recipe_parse(data, len);
+    if (is_ok(rr_t) == 1) {
+        var r = result_unwrap(rr_t, rr);
         # touch a few fields + validate to exercise the post-parse paths
         recipe_name(r);
         recipe_version(r);

@@ -8,7 +8,7 @@ version = "${file:VERSION}"
 description = "ark - Cyrius port"
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "6.6.20"
+cyrius = "6.7.9"
 
 [build]
 entry = "src/main.cyr"
@@ -20,12 +20,12 @@ defines = ["ARK_MAIN"]
 [deps]
 stdlib = ["string", "fmt", "alloc", "vec", "str", "slice", "syscalls", "io", "args", "assert", "hashmap", "tagged", "fs", "freelist", "chrono", "process", "result", "fnptr", "bench", "bayan", "ct", "random", "keccak", "thread_local", "sankoch", "sync", "trait", "sakshi", "thread", "net", "async", "atomic", "mmap", "dynlib", "fdlopen", "regression", "http", "tls", "ws", "sigil", "sandhi"]
 
-# No `path = "../<dep>"` overrides: under cyrius 6.6.x a `path` beside `git`/`tag`
-# wins locally, so a local build compiled the sibling checkout's main instead of the
-# tag CI resolves. Each tag below is the last one pinned to this cyrius.
+# No `path = "../<dep>"` overrides. From cyrius 6.7.6 a `path` beside `git`/`tag` is a
+# local-mode-only dev override (CYRIUS_LOCAL=1 / --local); a default build always
+# builds the tag. Each tag below is the last one pinned to this cyrius.
 [deps.nous]
 git = "https://github.com/MacCracken/nous.git"
-tag = "1.4.1"
+tag = "1.5.0"
 modules = ["dist/nous.cyr"]
 
 # mela — AGNOS marketplace layer (signed/integrity-checked/transparency-logged).
@@ -34,10 +34,10 @@ modules = ["dist/nous.cyr"]
 # the HTTP/TLS transport for marketplace downloads.
 [deps.mela]
 git = "https://github.com/MacCracken/mela.git"
-tag = "1.0.5"
+tag = "1.1.6"
 modules = ["dist/mela.cyr"]
 
 [deps.agnostik]
 git = "https://github.com/MacCracken/agnostik.git"
-tag = "1.7.1"
+tag = "1.12.0"
 modules = ["dist/agnostik.cyr"]

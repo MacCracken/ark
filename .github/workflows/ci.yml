@@ -34,7 +34,9 @@ jobs:
           echo "$HOME/.cyrius/bin" >> "$GITHUB_PATH"
 
       - name: Resolve dependencies
-        run: cyrius deps
+        # --locked (cyrius >= 6.7.6): fail if lib/ or cyrius.lock differ from what the tags resolve,
+        # instead of silently rewriting the tracked lib/.
+        run: cyrius deps --locked
 
       - name: Lint
         run: |
@@ -52,6 +54,11 @@ jobs:
 
       - name: Bench
         run: cyrius bench tests/ark.bcyr
+
+      # Not run before 1.5.0, and it stopped compiling at the 6.6 value-form migration
+      # without anyone seeing it.
+      - name: Fuzz
+        run: cyrius fuzz fuzz/ark.fcyr
 
   docs:
     name: Documentation

@@ -2,7 +2,7 @@
 
 > Per-release detail lives in [CHANGELOG.md](../../CHANGELOG.md). This roadmap
 > tracks the *shape*: what has shipped, what's open, and the forward AGNOS /
-> sovereignty track. Current release: **1.4.3**.
+> sovereignty track. Current release: **1.5.0**.
 
 ## Shipped
 
@@ -44,9 +44,14 @@
   6.6.20 warnings led to three live bugs: config-file bools and `system_backend`
   ignored (unterminated TOML slices), the transaction log never reloading, and a
   heap overflow on any config / log / backup file past 64 KiB.
+- **1.5.0 (2026-11-13) — cyrius 6.7.9.** nous 1.5.0 / mela 1.1.6 / agnostik 1.12.0 (each
+  the last tag pinned to 6.7.9) and the 6.7.9 bundled stdlib. No ark source change for the
+  toolchain: none of the 6.7.x shapes that change already-compiling code occur in `src/`.
+  CI resolves with `cyrius deps --locked` and now runs the fuzz harness, which had not
+  compiled since the 6.6 value-form migration.
 
-**Deps (1.4.3):** cyrius 6.6.20; nous 1.4.1, mela 1.0.5, agnostik 1.7.1 (git);
-sigil 3.13.10, sandhi 1.10.8, sankoch 2.8.1, bayan 1.5.12 (cyrius stdlib).
+**Deps (1.5.0):** cyrius 6.7.9; nous 1.5.0, mela 1.1.6, agnostik 1.12.0 (git);
+sigil 3.13.11, sandhi 1.10.9, sankoch 2.8.3, bayan 1.5.13, sakshi 2.5.8 (cyrius stdlib).
 
 ### Capabilities (verified against code, 2026-06-29)
 
@@ -76,7 +81,7 @@ What ark does today, end to end:
 - **Cross-target.** Builds for x86_64-linux and (cross-compiles for) agnos; the
   syscall-divergent paths route through `src/portable.cyr`.
 
-## Moving the cyrius pin to 6.6.5 — pin moved to 6.6.20 at 1.4.3
+## Moving the cyrius pin to 6.6.5 — pin moved past it at 1.4.3 (6.6.20)
 
 This section lists only what 6.6.5 itself changes.
 
@@ -87,9 +92,9 @@ This section lists only what 6.6.5 itself changes.
   from 6.6.5), and document them or record a baseline. See the cyrius
   CHANGELOG [6.6.5] entry "The whole CLI took flags as file names, dropped
   flags written after the operand, and dropped extra operands".
-  **Baseline at 1.4.3 (6.6.20):** `cyrius doc src/*.cyr --check` reports 91
-  documented / 305 undocumented and exits non-zero; `src/main.cyr` alone is
-  still 0 / 0.
+  **Baseline at 1.4.3 (6.6.20), unchanged at 1.5.0 (6.7.9):** `cyrius doc
+  src/*.cyr --check` reports 91 documented / 305 undocumented and exits
+  non-zero; `src/main.cyr` alone is still 0 / 0.
 - [x] At the bump, re-run `cyrius deps` — the aarch64 syscall peer moved
   SYS_UNLINKAT 35 → 263, so an un-re-vendored peer's sys_unlink would run
   nanosleep. Done at 1.4.3 (`cyrius lib sync --full --relock` + `cyrius deps`).
@@ -103,7 +108,17 @@ This section lists only what 6.6.5 itself changes.
   rather than reporting a zero-step success. Needs each op's type / package /
   version / source / from-version in the JSONL record, plus a reload test.
 - [ ] **zugot `marketplace/ark.cyml` is at 0.8.0** — never synced through 1.x.
-  Needs the 1.4.3 release asset's sha256, so it follows the tag.
+  Needs the current release asset's sha256, so it follows the tag.
+
+### Found at 1.5.0
+- [ ] **The trust set includes expired publisher keys.** `ark_trust_from_keyring`
+  (`src/ark_package.cyr`) trusts every version `mela_keyring_get_all_versions`
+  returns, which by mela's contract includes expired ones; nothing calls
+  `mela_kv_is_valid_at`. A policy call, not a mechanical fix: filtering at load
+  time would also refuse a re-install of a package signed while its key was
+  valid (the `.ark` carries no signing time). Options: filter by "now", or carry
+  a signing timestamp and check validity at that time. mela 1.1.1 (D5) already
+  rejects key files with no `has_until`, which used to decode as never-expiring.
 
 ### Quality-gate caveats (carried)
 - [ ] Coverage **metric** — `cyrius coverage` is non-actionable; coverage is
@@ -192,7 +207,7 @@ ark's remaining share (resolution stays in nous; build in takumi):
 - Metrics and telemetry (opt-in)
 - Offline mode with cached packages
 
-## Moving the cyrius pin to 6.6.6 — pin moved to 6.6.20 at 1.4.3
+## Moving the cyrius pin to 6.6.6 — pin moved past it at 1.4.3 (6.6.20)
 
 ✅ Verified at 1.4.3: the suite passes (434 / 0, exit 0), and two real
 `ark install --apply --root <dir>` runs leave two records in the root's
@@ -232,9 +247,11 @@ After bumping, verify: the full `.tcyr` suite passes per-file (exit code, not ju
 summary), and one `ark install` → `ark upgrade` → rollback cycle to confirm the transaction
 journal still accumulates records rather than replacing them.
 
-## Recorded by cyrius 6.7.6 (2026-10-08) — for the next cyrius pin move
+## Recorded by cyrius 6.7.6 (2026-10-08) — done at 1.5.0 (pin 6.7.9)
 
-⛔ Needs cyrius >= 6.7.6 — nothing to do until cyrius 6.7.6 is tagged; then at your pin bump:
+✅ At 1.5.0: no `path` lines to remove (dropped at 1.4.3); `cyrius.lock` already carried the
+three commit pins (added at 1.4.3's resolve); CI and release now run `cyrius deps --locked`.
+Kept for reference:
 
 - **Git first: a `path` beside `git` / `tag` becomes a dev override** (here: `nous`, `mela`,
   `agnostik`; sigil and sandhi are stdlib leaves since 1.4.3). ark 1.4.3 already dropped every
@@ -247,7 +264,7 @@ journal still accumulates records rather than replacing them.
   `lib/` or `cyrius.lock`; a hand-written `include "lib/<dep>.cyr"` sees the override there too (the
   compiler's `CYRIUS_LIB_OVERLAY`, set by `cyrius`).
 - The first default resolve adds commit pins for these deps to `cyrius.lock` — a one-time diff.
-- CI lock guards and `sed`-the-path-out steps can become `cyrius deps --locked`.
+- [x] CI lock guards and `sed`-the-path-out steps can become `cyrius deps --locked`. Done at 1.5.0.
 - Reference: the cyrius guide's *Git first; local development is a switch (6.7.6)*.
 
 ## Moved from cyrius's roadmap (2026-10-08) — for the next cyrius pin move
